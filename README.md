@@ -11,7 +11,7 @@ Mac Dial reads the raw HID reports directly and translates them into smooth scro
 🙏 Shout Out
 
 Big thanks to @andreasjhkarlsson for the original Mac Dial program.
-This project builds on that foundation with additional modes (smooth scrolling, improved playback, MIDI, and dual-dial support).
+This project builds on that foundation with additional modes (smooth scrolling, improved playback, MIDI).
 
 ⸻
 
