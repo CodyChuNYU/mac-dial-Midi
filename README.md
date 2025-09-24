@@ -1,27 +1,79 @@
-# Mac Dial
+⸻
 
-macOS support for the Surface Dial. The surface dial can be paired with macOS but any input results in invalid mouse inputs on macOS. This app reads the raw data from the dial and translates them to correct mouse and media inputs for macOS.
+Mac Dial Midi
 
-## Building
+macOS support for the Surface Dial.
+While macOS can pair with the Surface Dial, all input is misinterpreted as invalid mouse events.
+Mac Dial reads the raw HID reports directly and translates them into smooth scrolling, media keys, and MIDI signals for creative apps like Traktor.
 
-Make sure to clone the hidapi submodule and build the library using the build_hidapi.sh script. Note: This app depends on a hidapi fork, check the submodule to see what changed. App should then build with XCode.
+⸻
 
-You can find universal builds of the app under "releases". Note that these builds can be outdated.
+🙏 Shout Out
 
-## Usage
+Big thanks to @andreasjhkarlsson for the original Mac Dial program.
+This project builds on that foundation with additional modes (smooth scrolling, improved playback, MIDI, and dual-dial support).
 
-The app will continously try to open any Surface Dial connected to the computer and then process input controls. You will need to pair and connect the device as any other bluetooth device.
+⸻
 
-The app currently supports two modes:
-* Scroll mode: Turning the dial will result in scrolling. Pressing the dial is interpreteded as a mouse click at the current cursor position.
-* Playback mode: Turning the dial controls the system volume of your mac. Pressing the dial plays / pauses any current playback while a double click sends the "next" media action.
+✨ Features
+	•	Scroll Mode
+	•	Turn the dial to scroll smoothly (trackpad-like pixel scrolling with acceleration).
+	•	Press the dial to send a mouse click at the cursor.
+	•	Playback Mode
+	•	Turn the dial to adjust macOS system volume (fine detents, smoothing, acceleration).
+	•	Single click → Play/Pause.
+	•	Double click → Next track.
+	•	MIDI Mode
+	•	Each dial can appear as a CoreMIDI virtual device.
+	•	Sends CC messages (configurable as relative or absolute) for mapping in Traktor or any DAW.
+	•	Two dials are supported simultaneously, each on its own MIDI channel.
+	•	Menu Bar Integration
+	•	Switch between Scroll, Playback, and MIDI modes from the menu bar.
+	•	Configure wheel sensitivity, scroll direction, and haptics.
 
-To change mode, click the Mac Dial icon in the system menu bar.
+⸻
 
-If you want to app to run at startup you will need to add it yourself to the "login items" for your user.
+🔧 Building
+	1.	Clone the repo with submodules:
 
-## Improvements
+git clone --recursive https://github.com/andreasjhkarlsson/mac-dial
 
-* More input modes
-* Change input mode using the dial itself
-* ~~Smarter device discovery (currently tries to open the dial every 50 ms)~~
+
+	2.	Build the hidapi static library:
+
+cd mac-dial/lib/hidapi
+mkdir build && cd build
+cmake ..
+make
+
+This produces libhidapi.a, which must be linked in Xcode.
+
+	3.	Open the Xcode project and build.
+	•	Remove any .dylib references and link libhidapi.a instead.
+	•	Add lib/hidapi to your Header Search Paths.
+
+Universal builds may be found under Releases, but they can lag behind the latest source.
+
+⸻
+
+▶️ Usage
+	1.	Pair the Surface Dial as a standard Bluetooth device in macOS.
+	2.	Launch Mac Dial. It will automatically detect connected dials.
+	3.	Use the menu bar icon to switch modes:
+	•	Scroll Mode → Smooth trackpad-like scrolling.
+	•	Playback Mode → Volume & media key control.
+	•	MIDI Mode → Virtual MIDI knobs for music software.
+
+For auto-start on login, add Mac Dial manually to your Login Items in System Preferences.
+
+⸻
+
+🚀 Roadmap
+	•	Hot-swap between modes directly on the dial (without menu bar).
+	•	Advanced MIDI configuration (per-dial CC mapping).
+	•	More creative control modes (zoom, brush size, scrubbing).
+	•	Smarter device discovery (✅ now improved).
+
+⸻
+
+Would you like me to also include a “Contributors” section at the bottom, where we can list both you (for new features) and @andreasjhkarlsson (for the base project)? That might make the credit even clearer.
