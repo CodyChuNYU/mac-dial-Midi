@@ -16,20 +16,18 @@ This project builds on that foundation with additional modes (smooth scrolling, 
 ⸻
 
 ✨ Features
-	•	Scroll Mode
+**	•	Scroll Mode**
 	•	Turn the dial to scroll smoothly (trackpad-like pixel scrolling with acceleration).
 	•	Press the dial to send a mouse click at the cursor.
-	•	Playback Mode
+	
+**	•	Playback Mode**
 	•	Turn the dial to adjust macOS system volume (fine detents, smoothing, acceleration).
 	•	Single click → Play/Pause.
 	•	Double click → Next track.
-	•	MIDI Mode
+	
+**	•	MIDI Mode**
 	•	Each dial can appear as a CoreMIDI virtual device.
 	•	Sends CC messages (configurable as relative or absolute) for mapping in Traktor or any DAW.
-	•	Two dials are supported simultaneously, each on its own MIDI channel.
-	•	Menu Bar Integration
-	•	Switch between Scroll, Playback, and MIDI modes from the menu bar.
-	•	Configure wheel sensitivity, scroll direction, and haptics.
 
 ⸻
 
