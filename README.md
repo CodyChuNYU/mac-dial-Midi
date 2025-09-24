@@ -76,4 +76,7 @@ For auto-start on login, add Mac Dial manually to your Login Items in System Pre
 
 ⸻
 
-Would you like me to also include a “Contributors” section at the bottom, where we can list both you (for new features) and @andreasjhkarlsson (for the base project)? That might make the credit even clearer.
+👥 Contributors
+	•	@andreasjhkarlsson — Original creator of Mac Dial.
+	•	@codychunyu — Enhancements: smooth scrolling, refined playback, MIDI output, dual-dial support, and performance improvements.
+
