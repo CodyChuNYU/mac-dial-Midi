@@ -10,7 +10,7 @@ Mac Dial reads the raw HID reports directly and translates them into smooth scro
 
 🙏 Shout Out
 
-Big thanks to @andreasjhkarlsson for the original Mac Dial program.
+Big thanks to @andreasjhkarlsson for the original [Mac Dial](https://github.com/andreasjhkarlsson/mac-dial) program.
 This project builds on that foundation with additional modes (smooth scrolling, improved playback, MIDI).
 
 ⸻
@@ -76,6 +76,6 @@ For auto-start on login, add Mac Dial manually to your Login Items in System Pre
 ⸻
 
 👥 Contributors
-<br/>@andreasjhkarlsson — Original creator of Mac Dial.
+<br/>@andreasjhkarlsson — Original creator of [Mac Dial](https://github.com/andreasjhkarlsson/mac-dial).
 <br/>@codychunyu — Enhancements: smooth scrolling, refined playback, MIDI output, dual-dial support, and performance improvements.
 
