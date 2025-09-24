@@ -17,17 +17,17 @@ This project builds on that foundation with additional modes (smooth scrolling, 
 
 ✨ Features
 **Scroll Mode**
-Turn the dial to scroll smoothly (trackpad-like pixel scrolling with acceleration).
-Press the dial to send a mouse click at the cursor.
+<br/>Turn the dial to scroll smoothly (trackpad-like pixel scrolling with acceleration).
+<br/>Press the dial to send a mouse click at the cursor.
 	
 **Playback Mode**
-Turn the dial to adjust macOS system volume (fine detents, smoothing, acceleration).
-single click → Play/Pause.
-Double click → Next track.
+<br/>Turn the dial to adjust macOS system volume (fine detents, smoothing, acceleration).
+<br/>single click → Play/Pause.
+<br/>Double click → Next track.
 	
 **MIDI Mode**
-Each dial can appear as a CoreMIDI virtual device.
-Sends CC messages (configurable as relative or absolute) for mapping in Traktor or any DAW.
+<br/>Each dial can appear as a CoreMIDI virtual device.
+<br/>Sends CC messages (configurable as relative or absolute) for mapping in Traktor or any DAW.
 
 ⸻
 
@@ -55,22 +55,23 @@ Universal builds may be found under Releases, but they can lag behind the latest
 ⸻
 
 ▶️ Usage
-	1.	Pair the Surface Dial as a standard Bluetooth device in macOS.
-	2.	Launch Mac Dial. It will automatically detect connected dials.
-	3.	Use the menu bar icon to switch modes:
-	•	Scroll Mode → Smooth trackpad-like scrolling.
-	•	Playback Mode → Volume & media key control.
-	•	MIDI Mode → Virtual MIDI knobs for music software.
+<br/>1.	Pair the Surface Dial as a standard Bluetooth device in macOS.
+<br/>2.	Launch Mac Dial. It will automatically detect connected dials.
+<br/>3.	Use the menu bar icon to switch modes:
+<br/>Scroll Mode → Smooth trackpad-like scrolling.
+<br/>Playback Mode → Volume & media key control.
+<br/>MIDI Mode → Virtual MIDI knobs for music software.
 
 For auto-start on login, add Mac Dial manually to your Login Items in System Preferences.
 
 ⸻
 
 🚀 Roadmap
-	•	Hot-swap between modes directly on the dial (without menu bar).
-	•	Advanced MIDI configuration (per-dial CC mapping).
-	•	More creative control modes (zoom, brush size, scrubbing).
-	•	Smarter device discovery (✅ now improved).
+<br/>Multi dial support
+<br/>Hot-swap between modes directly on the dial (without menu bar).
+<br/>Advanced MIDI configuration (per-dial CC mapping).
+<br/>More creative control modes (zoom, brush size, scrubbing).
+
 
 ⸻
 
