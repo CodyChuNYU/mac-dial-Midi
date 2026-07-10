@@ -52,13 +52,13 @@ func runningKnownPlayer() -> NSRunningApplication? {
     return nil
 }
 
-/// Expands the macOS Now Playing panel in the menu bar by pressing Control
-/// Center's menu extra via the Accessibility API (covered by the permission
-/// the app already holds for posting events). Main thread only.
-func openNowPlayingPanel() {
+/// Finds Control Center's Now Playing menu extra via the Accessibility API
+/// (covered by the permission the app already holds for posting events).
+/// Main thread only. Pressing the returned element toggles the panel.
+func nowPlayingMenuExtra() -> AXUIElement? {
     guard let cc = NSRunningApplication
         .runningApplications(withBundleIdentifier: "com.apple.controlcenter").first
-    else { return }
+    else { return nil }
 
     let app = AXUIElementCreateApplication(cc.processIdentifier)
     var barRef: CFTypeRef?
@@ -67,24 +67,24 @@ func openNowPlayingPanel() {
           CFGetTypeID(bar) == AXUIElementGetTypeID()
     else {
         hidLog.error("Now Playing: couldn't read Control Center menu extras")
-        return
+        return nil
     }
 
     var kidsRef: CFTypeRef?
     guard AXUIElementCopyAttributeValue(bar as! AXUIElement, "AXChildren" as CFString, &kidsRef) == .success,
           let items = kidsRef as? [AXUIElement]
-    else { return }
+    else { return nil }
 
     for item in items {
         var identRef: CFTypeRef?
         AXUIElementCopyAttributeValue(item, "AXIdentifier" as CFString, &identRef)
         if let ident = identRef as? String, ident == "com.apple.menuextra.now-playing" {
-            AXUIElementPerformAction(item, "AXPress" as CFString)
-            return
+            return item
         }
     }
     // Panel only exists while something is (recently) playing.
     hidLog.info("Now Playing menu extra not present")
+    return nil
 }
 
 /// https://stackoverflow.com/a/55854051
@@ -140,16 +140,23 @@ struct VolumeControl {
 /// Playback mode: rotate = volume (accelerated), press = play/pause,
 /// double-press = focus the app that's playing, press-and-turn = skip tracks.
 class PlaybackController: Controller {
-    /// Fires the long-press action while the dial is still held. `fired` is
-    /// only touched on the main queue, so onUp's main-queue check is race-free.
+    /// Fires the peek while the dial is still held, caching the menu extra so
+    /// the close on release is a single AXPress with no tree walk. `fired`
+    /// and `panelItem` are only touched on the main queue, so onUp's
+    /// main-queue check is race-free.
     private final class LongPressToken {
         var fired = false
+        var panelItem: AXUIElement?
         private(set) var item: DispatchWorkItem!
 
-        init(action: @escaping () -> Void) {
+        init() {
             item = DispatchWorkItem { [weak self] in
-                self?.fired = true
-                action()
+                guard let self = self else { return }
+                self.fired = true
+                self.panelItem = nowPlayingMenuExtra()
+                if let panelItem = self.panelItem {
+                    AXUIElementPerformAction(panelItem, "AXPress" as CFString)
+                }
             }
         }
     }
@@ -177,7 +184,7 @@ class PlaybackController: Controller {
         dial.haptics = true
         // Long press (no rotation): expand the menu bar Now Playing panel,
         // as soon as the threshold passes — no release needed.
-        let token = LongPressToken { openNowPlayingPanel() }
+        let token = LongPressToken()
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.longPressSeconds, execute: token.item)
         pressStates[dial.serialNumber] = PressState(longPress: token)
     }
@@ -203,10 +210,12 @@ class PlaybackController: Controller {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             // Long press opened the Now Playing panel: releasing closes it
-            // again (pressing the menu extra toggles), so the panel shows
-            // only while the dial is held.
-            if state?.longPress.fired == true {
-                openNowPlayingPanel()
+            // instantly via the cached element (pressing the extra toggles),
+            // so the panel shows only while the dial is held.
+            if let token = state?.longPress, token.fired {
+                if let panelItem = token.panelItem {
+                    AXUIElementPerformAction(panelItem, "AXPress" as CFString)
+                }
                 return
             }
             if clickDelay < 0.5 { // Double click: focus the playing app
