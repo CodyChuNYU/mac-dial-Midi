@@ -104,20 +104,15 @@ class StatusBarController {
 
     init(_ manager: DialManager) {
         self.manager = manager
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.menu = menu
         menu.minimumWidth = 260
 
         if let button = statusItem.button {
-            if let symbol = NSImage(systemSymbolName: "dial.min.fill",
-                                    accessibilityDescription: "Mac Dial")
-            {
-                symbol.isTemplate = true
-                button.image = symbol
-                button.imagePosition = .imageOnly
-            } else {
-                button.title = "◐"
-            }
+            let icon = NSImage(named: "icon-scroll")
+            icon?.size = NSSize(width: 18, height: 18)
+            button.image = icon
+            button.imagePosition = .imageLeft
         }
 
         manager.configureDial = { [weak self] dial in
