@@ -200,8 +200,13 @@ class PlaybackController: Controller {
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            // Long press already opened the Now Playing panel; nothing to do.
-            if state?.longPress.fired == true { return }
+            // Long press opened the Now Playing panel: releasing closes it
+            // again (pressing the menu extra toggles), so the panel shows
+            // only while the dial is held.
+            if state?.longPress.fired == true {
+                openNowPlayingPanel()
+                return
+            }
             if clickDelay < 0.5 { // Double click: focus the playing app
                 // Undo pause sent on first click
                 HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
