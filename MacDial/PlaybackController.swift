@@ -32,13 +32,46 @@ func HIDPostAuxKey(key: Int32, modifiers: [NSEvent.ModifierFlags], _repeat: Int 
     }
 }
 
+/// Shared volume-with-acceleration helper: ~36 quarter-steps per slow
+/// revolution, ramping up to 4x when the dial is spun fast.
+struct VolumeControl {
+    private var accumulator = TickAccumulator()
+    private var velocity = VelocityTracker()
+
+    mutating func rotate(ticks: Int, ticksPerRevolution: Int) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let v = velocity.record(revs: Double(ticks) / Double(ticksPerRevolution), at: now)
+        let gain = ScrollMath.gain(velocity: v, accel: 2.0, exponent: 1.2, maxGain: 4)
+        let steps = accumulator.steps(ticks: ticks, ticksPerRevolution: ticksPerRevolution, gain: gain)
+        guard steps != 0 else { return }
+        let key = steps > 0 ? NX_KEYTYPE_SOUND_UP : NX_KEYTYPE_SOUND_DOWN
+        HIDPostAuxKey(key: key,
+                      modifiers: [.shift, .option], // quarter-step volume
+                      _repeat: abs(steps))
+    }
+}
+
+/// Playback mode: rotate = volume (accelerated), press = play/pause,
+/// double-press = next track, press-and-turn = skip tracks.
 class PlaybackController: Controller {
-    var lastClick = Date().timeIntervalSince1970
-    private var volume = TickAccumulator()
+    private struct PressState {
+        var rotated = false
+        var skip = TickAccumulator()
+    }
 
-    func onDown(dial _: Dial) {}
+    private var lastClick = Date().timeIntervalSince1970
+    private var pressStates: [String: PressState] = [:]
+    private var volume = VolumeControl()
 
-    func onUp(dial _: Dial) {
+    func onDown(dial: Dial) {
+        pressStates[dial.serialNumber] = PressState()
+    }
+
+    func onUp(dial: Dial) {
+        let state = pressStates.removeValue(forKey: dial.serialNumber)
+        // Press-and-turn already skipped tracks; don't also play/pause.
+        guard state?.rotated != true else { return }
+
         let clickDelay = Date().timeIntervalSince1970 - lastClick
 
         // Next song on double click
@@ -55,14 +88,20 @@ class PlaybackController: Controller {
     }
 
     func onRotate(dial: Dial, rotation: Dial.Rotation, direction _: Int) {
-        // Normalize to ~36 volume steps per revolution at any hardware
-        // resolution, so smooth mode doesn't change volume 10x faster.
-        let steps = volume.steps(ticks: rotation.ticks,
-                                 ticksPerRevolution: dial.wheelSensitivity)
-        guard steps != 0 else { return }
-        let key = steps > 0 ? NX_KEYTYPE_SOUND_UP : NX_KEYTYPE_SOUND_DOWN
-        HIDPostAuxKey(key: key,
-                      modifiers: [.shift, .option], // quarter-step volume
-                      _repeat: abs(steps))
+        if var state = pressStates[dial.serialNumber] {
+            // Press-and-turn: one track skip per 1/8 revolution (45°).
+            state.rotated = true
+            let steps = state.skip.steps(ticks: rotation.ticks,
+                                         ticksPerRevolution: dial.wheelSensitivity,
+                                         stepsPerRevolution: 8)
+            pressStates[dial.serialNumber] = state
+            if steps != 0 {
+                let key = steps > 0 ? NX_KEYTYPE_NEXT : NX_KEYTYPE_PREVIOUS
+                HIDPostAuxKey(key: key, modifiers: [], _repeat: abs(steps))
+            }
+            return
+        }
+
+        volume.rotate(ticks: rotation.ticks, ticksPerRevolution: dial.wheelSensitivity)
     }
 }

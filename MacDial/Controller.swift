@@ -10,16 +10,19 @@ protocol Controller: AnyObject {
 }
 
 /// Converts raw detent ticks into coarse steps independent of the dial's
-/// hardware resolution (~36 steps per revolution regardless of sensitivity),
-/// carrying the remainder so slow rotation still accumulates.
+/// hardware resolution (stepsPerRevolution regardless of sensitivity),
+/// carrying the remainder so slow rotation still accumulates. An optional
+/// gain multiplier lets callers accelerate fast spins.
 struct TickAccumulator {
-    private var residual = 0
+    private var residual = 0.0
 
-    mutating func steps(ticks: Int, ticksPerRevolution: Int) -> Int {
-        let ticksPerStep = max(1, ticksPerRevolution / 36)
-        residual += ticks
-        let steps = residual / ticksPerStep
-        residual -= steps * ticksPerStep
+    mutating func steps(ticks: Int, ticksPerRevolution: Int,
+                        stepsPerRevolution: Int = 36, gain: Double = 1) -> Int
+    {
+        let ticksPerStep = max(1, ticksPerRevolution / max(1, stepsPerRevolution))
+        residual += Double(ticks) * gain
+        let steps = Int(residual / Double(ticksPerStep))
+        residual -= Double(steps * ticksPerStep)
         return steps
     }
 

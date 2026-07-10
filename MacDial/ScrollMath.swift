@@ -19,3 +19,18 @@ enum ScrollMath {
         return pending * (1 - exp(-dt / max(tau, 0.001)))
     }
 }
+
+/// Angular velocity estimate over a sliding 150ms window. Time is supplied
+/// by the caller (seconds, any monotonic clock) so this stays pure/testable.
+struct VelocityTracker {
+    private var samples: [(t: Double, revs: Double)] = []
+
+    /// Record a rotation of `revs` (sign ignored) at time `t`; returns the
+    /// current speed in revolutions per second.
+    mutating func record(revs: Double, at t: Double) -> Double {
+        samples.append((t, abs(revs)))
+        let cutoff = t - 0.15
+        samples.removeAll { $0.t < cutoff }
+        return samples.reduce(0) { $0 + $1.revs } / 0.15
+    }
+}

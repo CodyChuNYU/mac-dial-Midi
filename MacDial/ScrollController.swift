@@ -7,7 +7,7 @@ class ScrollController: Controller {
     private struct PressState {
         var pressed = false
         var rotated = false
-        var volume = TickAccumulator()
+        var volume = VolumeControl()
     }
 
     private var pressStates: [String: PressState] = [:]
@@ -39,17 +39,11 @@ class ScrollController: Controller {
 
     func onRotate(dial: Dial, rotation: Dial.Rotation, direction: Int) {
         if var state = pressStates[dial.serialNumber], state.pressed {
-            // Press-and-turn: volume, normalized to ~36 steps per revolution.
+            // Press-and-turn: accelerated volume.
             state.rotated = true
-            let steps = state.volume.steps(ticks: rotation.ticks,
-                                           ticksPerRevolution: dial.wheelSensitivity)
+            state.volume.rotate(ticks: rotation.ticks,
+                                ticksPerRevolution: dial.wheelSensitivity)
             pressStates[dial.serialNumber] = state
-            if steps != 0 {
-                let key = steps > 0 ? NX_KEYTYPE_SOUND_UP : NX_KEYTYPE_SOUND_DOWN
-                HIDPostAuxKey(key: key,
-                              modifiers: [.shift, .option], // quarter-step volume
-                              _repeat: abs(steps))
-            }
             return
         }
 

@@ -40,6 +40,17 @@ enum ScrollMathTests {
         assertClose(ScrollMath.releasePortion(pending: 1.2, dt: 1.0 / 120, tau: 0.045), 1.2, "tail flushes exactly")
         assert(ScrollMath.releasePortion(pending: 0, dt: 1.0 / 120, tau: 0.045) == 0, "zero pending emits nothing")
 
+        // Velocity tracker: steady 1 rev/s input reads ~1 rev/s; stale
+        // samples fall out of the window.
+        var tracker = VelocityTracker()
+        var v = 0.0
+        for i in 0 ... 30 { // 100 ticks/s, 0.01 revs each = 1 rev/s
+            v = tracker.record(revs: 0.01, at: Double(i) * 0.01)
+        }
+        assert(abs(v - 1.0) < 0.15, "steady spin reads ~1 rev/s, got \(v)")
+        v = tracker.record(revs: 0.0, at: 10)
+        assert(v < 0.01, "velocity decays once samples age out, got \(v)")
+
         print("scroll math: all checks passed")
     }
 }
