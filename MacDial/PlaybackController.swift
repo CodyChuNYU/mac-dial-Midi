@@ -185,10 +185,11 @@ class PlaybackController: Controller {
         var panelItem: AXUIElement?
         private(set) var item: DispatchWorkItem!
 
-        init() {
+        init(onFire: @escaping () -> Void) {
             item = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
                 self.fired = true
+                onFire()
                 let t0 = ProcessInfo.processInfo.systemUptime
                 self.panelItem = nowPlayingMenuExtra()
                 let t1 = ProcessInfo.processInfo.systemUptime
@@ -212,15 +213,22 @@ class PlaybackController: Controller {
     /// eating play/pause presses.
     private static let longPressSeconds = 0.25
 
-    /// How long a single click waits for a possible second click. Play/pause
-    /// fires only after this window, so a double click never pauses playback.
+    /// Window in which a second press counts as a double click.
     private static let doubleClickSeconds = 0.35
 
     private var pressStates: [String: PressState] = [:]
     private var volume = VolumeControl()
     private var lastAudibleApp: NSRunningApplication? // main queue only
-    private var pendingSingleClick: DispatchWorkItem? // main queue only
-    private var isSecondClick = false // main queue only
+    private var lastClickAt: TimeInterval = 0 // main queue only
+
+    /// Play/pause fires instantly on click; if the *next* press turns out to
+    /// be something else (peek, skip-turn), this undoes that toggle so a
+    /// double-gesture never leaves the song paused. Main queue only.
+    private func undoRecentPlayPause() {
+        guard ProcessInfo.processInfo.systemUptime - lastClickAt < Self.doubleClickSeconds else { return }
+        lastClickAt = 0
+        HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+    }
 
     func onDown(dial: Dial) {
         // While held, force coarse clicky detents so each song skip is a felt
@@ -228,24 +236,11 @@ class PlaybackController: Controller {
         // (12° per click) — one felt click is exactly one song.
         dial.configure(sensitivity: 30, haptics: true)
         // Long press (no rotation): expand the menu bar Now Playing panel,
-        // as soon as the threshold passes — no release needed.
-        let token = LongPressToken()
+        // as soon as the threshold passes — no release needed. If this press
+        // came right after a click, undo that click's play/pause first.
+        let token = LongPressToken { [weak self] in self?.undoRecentPlayPause() }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.longPressSeconds, execute: token.item)
         pressStates[dial.serialNumber] = PressState(longPress: token)
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            // A press landing inside the single-click window makes this a
-            // double click: cancel the pending play/pause so playback is
-            // never touched.
-            if let pending = self.pendingSingleClick {
-                pending.cancel()
-                self.pendingSingleClick = nil
-                self.isSecondClick = true
-            } else {
-                self.isSecondClick = false
-            }
-        }
     }
 
     func onUp(dial: Dial) {
@@ -266,7 +261,6 @@ class PlaybackController: Controller {
             // detent jiggle on release must not strand the panel open).
             let token = state.longPress
             if token.fired {
-                self.isSecondClick = false
                 if let panelItem = token.panelItem {
                     let t0 = ProcessInfo.processInfo.systemUptime
                     let err = AXUIElementPerformAction(panelItem, "AXPress" as CFString)
@@ -276,25 +270,22 @@ class PlaybackController: Controller {
                 return
             }
             // Press-and-turn already skipped tracks; don't also play/pause.
-            if rotated {
-                self.isSecondClick = false
-                return
-            }
+            if rotated { return }
 
-            if self.isSecondClick { // Double click: focus the playing app
-                self.isSecondClick = false
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - self.lastClickAt < Self.doubleClickSeconds {
+                // Double click: this toggle undoes the first click's pause,
+                // then the playing app comes to front.
+                self.lastClickAt = 0
+                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
                 let app = self.lastAudibleApp ?? audiblyPlayingApp() ?? runningKnownPlayer()
                 app?.activate()
             } else {
-                // Snapshot who's audible while sound is still playing, then
-                // play/pause once the double-click window passes.
+                // Single click: instant play/pause. Snapshot who's audible
+                // first, while the sound is still on.
+                self.lastClickAt = now
                 self.lastAudibleApp = audiblyPlayingApp()
-                let work = DispatchWorkItem { [weak self] in
-                    self?.pendingSingleClick = nil
-                    HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
-                }
-                self.pendingSingleClick = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.doubleClickSeconds, execute: work)
+                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
             }
         }
     }
@@ -304,6 +295,10 @@ class PlaybackController: Controller {
             // Press-and-turn: the hold runs the dial at 30 haptic detents/rev
             // and one skip per detent, so every physical click you feel is
             // exactly one song.
+            if !state.rotated {
+                // Click-then-skip: undo the click's play/pause toggle.
+                DispatchQueue.main.async { [weak self] in self?.undoRecentPlayPause() }
+            }
             state.rotated = true
             state.longPress.item.cancel() // turning means skip, not Now Playing
             let steps = state.skip.steps(ticks: rotation.ticks,
