@@ -153,9 +153,14 @@ class PlaybackController: Controller {
             item = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
                 self.fired = true
+                let t0 = ProcessInfo.processInfo.systemUptime
                 self.panelItem = nowPlayingMenuExtra()
+                let t1 = ProcessInfo.processInfo.systemUptime
+                hidLog.info("peek: find took \(Int((t1 - t0) * 1000))ms, found=\(self.panelItem != nil)")
                 if let panelItem = self.panelItem {
-                    AXUIElementPerformAction(panelItem, "AXPress" as CFString)
+                    let err = AXUIElementPerformAction(panelItem, "AXPress" as CFString)
+                    let t2 = ProcessInfo.processInfo.systemUptime
+                    hidLog.info("peek: open press err=\(err.rawValue) took \(Int((t2 - t1) * 1000))ms")
                 }
             }
         }
@@ -193,31 +198,32 @@ class PlaybackController: Controller {
         // Restore the user's configured feel (global haptics setting).
         DialManager.shared.configureDial?(dial)
 
-        let state = pressStates.removeValue(forKey: dial.serialNumber)
-        // Press-and-turn already skipped tracks; don't also play/pause.
-        guard state?.rotated != true else {
-            state?.longPress.item.cancel()
-            return
-        }
-
+        guard let state = pressStates.removeValue(forKey: dial.serialNumber) else { return }
         // Released before the long-press timer: cancel it. (No-op if it
         // already fired; the main-queue block below sees `fired` and bails.)
-        state?.longPress.item.cancel()
+        state.longPress.item.cancel()
 
+        let rotated = state.rotated
         let clickDelay = Date().timeIntervalSince1970 - lastClick
-        lastClick = Date().timeIntervalSince1970
+        if !rotated { lastClick = Date().timeIntervalSince1970 }
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            // Long press opened the Now Playing panel: releasing closes it
-            // instantly via the cached element (pressing the extra toggles),
-            // so the panel shows only while the dial is held.
-            if let token = state?.longPress, token.fired {
+            // Long press opened the Now Playing panel: releasing ALWAYS
+            // closes it — even if the dial was turned during the peek (a
+            // detent jiggle on release must not strand the panel open).
+            let token = state.longPress
+            if token.fired {
                 if let panelItem = token.panelItem {
-                    AXUIElementPerformAction(panelItem, "AXPress" as CFString)
+                    let t0 = ProcessInfo.processInfo.systemUptime
+                    let err = AXUIElementPerformAction(panelItem, "AXPress" as CFString)
+                    let t1 = ProcessInfo.processInfo.systemUptime
+                    hidLog.info("peek: close press err=\(err.rawValue) took \(Int((t1 - t0) * 1000))ms")
                 }
                 return
             }
+            // Press-and-turn already skipped tracks; don't also play/pause.
+            if rotated { return }
             if clickDelay < 0.5 { // Double click: focus the playing app
                 // Undo pause sent on first click
                 HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
