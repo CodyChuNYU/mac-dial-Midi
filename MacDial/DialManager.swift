@@ -91,7 +91,12 @@ class DialManager {
             lock.lock()
             let alreadyOpen = dialsByPath[path] != nil
             lock.unlock()
-            guard !alreadyOpen, let dial = Dial(path: path) else { continue }
+            guard !alreadyOpen else { continue }
+            guard let dial = Dial(path: path) else {
+                // Usually means Input Monitoring permission is missing.
+                print("Found Surface Dial at \(path) but couldn't open it")
+                continue
+            }
 
             dial.onButtonStateChanged = { [weak self] dial, state in
                 self?.onButtonStateChanged?(dial, state)
