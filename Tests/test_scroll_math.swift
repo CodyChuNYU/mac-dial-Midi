@@ -1,0 +1,45 @@
+// Standalone check for the scroll feel math. Run with:
+//   swiftc -o /tmp/scrollmath Tests/test_scroll_math.swift MacDial/ScrollMath.swift && /tmp/scrollmath
+
+func assertClose(_ a: Double, _ b: Double, _ label: String, tolerance: Double = 1e-9) {
+    assert(abs(a - b) < tolerance, "\(label): \(a) != \(b)")
+}
+
+@main
+enum ScrollMathTests {
+    static func main() {
+        // Gain curve: identity at rest, monotonic, capped.
+        assertClose(ScrollMath.gain(velocity: 0, accel: 3, exponent: 1.35, maxGain: 12), 1, "gain at rest is 1")
+        var last = 0.0
+        for i in 0 ... 100 {
+            let g = ScrollMath.gain(velocity: Double(i) * 0.1, accel: 3, exponent: 1.35, maxGain: 12)
+            assert(g >= last, "gain must be monotonic")
+            assert(g <= 12, "gain must respect maxGain")
+            last = g
+        }
+
+        assert(ScrollMath.gain(velocity: 1e6, accel: 3, exponent: 1.35, maxGain: 12) == 12, "gain caps at maxGain")
+        assert(ScrollMath.gain(velocity: -5, accel: 3, exponent: 1.35, maxGain: 12) == 1, "negative velocity clamps to rest")
+
+        // Release: sign-preserving, converging, and lossless overall.
+        for pending0 in [240.0, -240.0] {
+            var pending = pending0
+            var emitted = 0.0
+            for _ in 0 ..< 200 { // 200 frames @120Hz
+                let portion = ScrollMath.releasePortion(pending: pending, dt: 1.0 / 120, tau: 0.045)
+                assert(portion == 0 || (portion > 0) == (pending > 0), "release preserves direction")
+                assert(abs(portion) <= abs(pending) + 1e-9, "release never overshoots")
+                pending -= portion
+                emitted += portion
+            }
+            assertClose(emitted, pending0, "all pending pixels are eventually emitted")
+            assertClose(pending, 0, "pending drains to exactly zero")
+        }
+
+        // Tail flush: small residue emits exactly, in one frame.
+        assertClose(ScrollMath.releasePortion(pending: 1.2, dt: 1.0 / 120, tau: 0.045), 1.2, "tail flushes exactly")
+        assert(ScrollMath.releasePortion(pending: 0, dt: 1.0 / 120, tau: 0.045) == 0, "zero pending emits nothing")
+
+        print("scroll math: all checks passed")
+    }
+}

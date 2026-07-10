@@ -2,7 +2,7 @@ import CoreMIDI
 import Foundation
 
 /// Publishes one virtual MIDI source per dial so DAWs see each Surface Dial
-/// as its own controller.
+/// as its own controller. Uses the modern MIDIEventList (UMP) API.
 final class MIDIManager {
     static let shared = MIDIManager()
 
@@ -27,21 +27,19 @@ final class MIDIManager {
         if let existing = endpoints[serial] { return existing }
         var endpoint = MIDIEndpointRef()
         let suffix = String(serial.suffix(4))
-        MIDISourceCreate(client, "Surface Dial \(suffix)" as CFString, &endpoint)
+        MIDISourceCreateWithProtocol(client, "Surface Dial \(suffix)" as CFString, ._1_0, &endpoint)
         endpoints[serial] = endpoint
         return endpoint
     }
 
-    private func send(serial: String, bytes: (UInt8, UInt8, UInt8)) {
+    private func send(serial: String, status: UInt8, data1: UInt8, data2: UInt8) {
         let source = endpoint(for: serial)
-        var packet = MIDIPacket()
-        packet.timeStamp = 0
-        packet.length = 3
-        packet.data.0 = bytes.0
-        packet.data.1 = bytes.1
-        packet.data.2 = bytes.2
-        var list = MIDIPacketList(numPackets: 1, packet: packet)
-        MIDIReceived(source, &list)
+        // UMP MIDI 1.0 channel voice message (message type 2, group 0).
+        let word: UInt32 = (0x2 << 28) | (UInt32(status) << 16) | (UInt32(data1) << 8) | UInt32(data2)
+        var list = MIDIEventList()
+        let packet = MIDIEventListInit(&list, ._1_0)
+        MIDIEventListAdd(&list, MemoryLayout<MIDIEventList>.size, packet, 0, 1, [word])
+        MIDIReceivedEventList(source, &list)
     }
 
     /// Relative CC, two's-complement encoding (1..63 = up, 127..65 = down).
@@ -50,11 +48,11 @@ final class MIDIManager {
         let value: UInt8 = delta > 0
             ? UInt8(min(63, delta))
             : UInt8(128 + max(-64, delta))
-        send(serial: serial, bytes: (0xB0 | (channel & 0x0F), cc & 0x7F, value))
+        send(serial: serial, status: 0xB0 | (channel & 0x0F), data1: cc & 0x7F, data2: value)
     }
 
     func sendNote(serial: String, channel: UInt8, note: UInt8, on: Bool) {
         let status: UInt8 = (on ? 0x90 : 0x80) | (channel & 0x0F)
-        send(serial: serial, bytes: (status, note & 0x7F, on ? 127 : 0))
+        send(serial: serial, status: status, data1: note & 0x7F, data2: on ? 127 : 0)
     }
 }

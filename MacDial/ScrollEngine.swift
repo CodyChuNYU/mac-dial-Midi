@@ -1,5 +1,5 @@
+import AppKit
 import CoreGraphics
-import CoreVideo
 import Foundation
 
 /// Turns dial detents into trackpad-quality pixel scrolling.
@@ -7,12 +7,14 @@ import Foundation
 /// Feel model:
 ///  - Input is normalized to revolutions, so hardware sensitivity changes
 ///    granularity but not speed.
-///  - A velocity-based gain curve (1 + accel * v^exponent) accelerates fast
-///    spins while keeping slow rotation precise.
+///  - A velocity-based gain curve (ScrollMath.gain) accelerates fast spins
+///    while keeping slow rotation precise.
 ///  - Output pixels go through an exponential-release accumulator drained on
 ///    a display link, so irregular HID reports become a smooth per-frame
 ///    stream with sub-pixel carry — no tick is ever lost or duplicated.
-final class ScrollEngine {
+///  - Events carry trackpad-style gesture phases (began/changed/ended) so
+///    apps use their smooth elastic scrolling path.
+final class ScrollEngine: NSObject {
     static let shared = ScrollEngine()
 
     struct Config {
@@ -59,19 +61,22 @@ final class ScrollEngine {
     // Sliding window of (timestamp ns, revolutions) for velocity estimation.
     private var recentRevs: [(t: UInt64, revs: Double)] = []
     private var lastDrainNS: UInt64 = 0
-    private var displayLink: CVDisplayLink?
+    private var lastIngestNS: UInt64 = 0
+    private var gestureActive = false
+    private var displayLink: CADisplayLink?
 
-    private init() {
+    override private init() {
         guard let s = CGEventSource(stateID: .hidSystemState) else {
             fatalError("Could not create CGEventSource")
         }
         source = s
         source.localEventsSuppressionInterval = 0.0
+        super.init()
         startDisplayLink()
     }
 
     deinit {
-        if let dl = displayLink { CVDisplayLinkStop(dl) }
+        displayLink?.invalidate()
     }
 
     // MARK: - API
@@ -84,11 +89,13 @@ final class ScrollEngine {
         let revs = Double(ticks) / Double(ticksPerRevolution)
 
         lock.lock()
+        lastIngestNS = now
         recentRevs.append((now, abs(revs)))
         trimWindow(now: now)
 
-        let v = velocityLocked(now: now) // rev/s
-        let gain = min(cfg.maxGain, 1 + cfg.accel * pow(v, cfg.exponent))
+        let v = velocityLocked() // rev/s
+        let gain = ScrollMath.gain(velocity: v, accel: cfg.accel,
+                                   exponent: cfg.exponent, maxGain: cfg.maxGain)
         let pixels = revs * cfg.pixelsPerRevolution * gain
 
         // Direction reversal: dump leftover travel so the dial never
@@ -117,18 +124,15 @@ final class ScrollEngine {
     // MARK: - Drain
 
     private func startDisplayLink() {
-        var link: CVDisplayLink?
-        CVDisplayLinkCreateWithActiveCGDisplays(&link)
-        guard let dl = link else { return }
-        displayLink = dl
-        CVDisplayLinkSetOutputCallback(dl, { _, _, _, _, _, userInfo -> CVReturn in
-            Unmanaged<ScrollEngine>.fromOpaque(userInfo!).takeUnretainedValue().drain()
-            return kCVReturnSuccess
-        }, Unmanaged.passUnretained(self).toOpaque())
-        CVDisplayLinkStart(dl)
+        // ponytail: bound to the screen present at launch; recreate on
+        // NSApplication.didChangeScreenParametersNotification if it matters.
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let link = screen.displayLink(target: self, selector: #selector(drainTick(_:)))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
     }
 
-    private func drain() {
+    @objc private func drainTick(_: CADisplayLink) {
         let now = nowNS()
 
         lock.lock()
@@ -136,35 +140,43 @@ final class ScrollEngine {
         lastDrainNS = now
         trimWindow(now: now)
 
-        var emit = 0
-        if pendingPixels != 0 {
-            // Exponential release: each frame emits a fixed fraction of what's
-            // left, converging smoothly instead of stair-stepping.
-            var portion = pendingPixels * (1 - exp(-dt / cfg.tau))
-            if abs(pendingPixels) < 1.5 { portion = pendingPixels } // flush tail
-            emit = Int(portion.rounded(.towardZero))
-            // Keep the sub-pixel remainder in the pool: nothing is lost.
-            pendingPixels -= Double(emit)
-            if emit == 0, abs(pendingPixels) < 0.01 { pendingPixels = 0 }
+        let portion = ScrollMath.releasePortion(pending: pendingPixels, dt: dt, tau: cfg.tau)
+        let emit = Int(portion.rounded(.towardZero))
+        // Keep the sub-pixel remainder in the pool: nothing is lost.
+        pendingPixels -= Double(emit)
+        if emit == 0, abs(pendingPixels) < 0.01 { pendingPixels = 0 }
+
+        var sendBegan = false
+        var sendEnded = false
+        if emit != 0, !gestureActive {
+            gestureActive = true
+            sendBegan = true
+        } else if gestureActive, emit == 0, pendingPixels == 0,
+                  now &- lastIngestNS > 80_000_000
+        { // 80ms idle
+            gestureActive = false
+            sendEnded = true
         }
         lock.unlock()
 
-        if emit != 0 {
-            post(pixels: emit)
-        }
+        if sendBegan { post(pixels: 0, phase: .began) }
+        if emit != 0 { post(pixels: emit, phase: .changed) }
+        if sendEnded { post(pixels: 0, phase: .ended) }
     }
 
-    private func post(pixels: Int) {
+    private func post(pixels: Int, phase: CGScrollPhase) {
         guard let event = CGEvent(scrollWheelEvent2Source: source,
                                   units: .pixel,
                                   wheelCount: 1,
                                   wheel1: Int32(pixels),
                                   wheel2: 0,
                                   wheel3: 0) else { return }
-        // Present as a continuous (trackpad-style) stream so apps use their
-        // smooth pixel-scrolling path.
+        // Present as a continuous (trackpad-style) gesture stream so apps
+        // use their smooth pixel-scrolling path.
         event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
         event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(pixels))
+        event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+        event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: 0)
         event.post(tap: .cghidEventTap)
     }
 
@@ -177,7 +189,7 @@ final class ScrollEngine {
         }
     }
 
-    private func velocityLocked(now _: UInt64) -> Double {
+    private func velocityLocked() -> Double {
         let total = recentRevs.reduce(0) { $0 + $1.revs }
         return total / 0.15 // rev/s over the 150ms window
     }
