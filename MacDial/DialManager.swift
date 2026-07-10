@@ -1,20 +1,22 @@
 import Foundation
+import IOKit.hid
+import os
 
-/// Discovers and owns every connected Surface Dial. A single discovery
-/// thread enumerates on hotplug events (hid_monitor) or every few seconds,
-/// opening any dial that isn't open yet. Each Dial runs its own read thread.
-class DialManager {
+/// Discovers and owns every connected Surface Dial via IOHIDManager.
+/// Matching/removal callbacks and input reports all run on a dedicated
+/// runloop thread — no polling.
+final class DialManager {
     static let shared = DialManager()
 
+    private var manager: IOHIDManager?
+    private var runLoop: CFRunLoop?
     private var thread: Thread?
-    private var running = false
-    private let semaphore = DispatchSemaphore(value: 0)
     private let lock = NSLock()
-    private var dialsByPath: [String: Dial] = [:]
+    private var dialsBySerial: [String: Dial] = [:]
 
     /// Fired on the main queue whenever a dial connects or disconnects.
     var onDialsChanged: (([Dial]) -> Void)?
-    /// Fired from the dial's read thread.
+    /// Fired from the HID runloop thread.
     var onButtonStateChanged: ((Dial, Dial.ButtonState) -> Void)?
     var onRotation: ((Dial, Dial.Rotation) -> Void)?
     /// Applied to every dial when it connects (sensitivity, haptics).
@@ -23,33 +25,32 @@ class DialManager {
     var dials: [Dial] {
         lock.lock()
         defer { lock.unlock() }
-        return dialsByPath.values.sorted { $0.serialNumber < $1.serialNumber }
+        return dialsBySerial.values.sorted { $0.serialNumber < $1.serialNumber }
     }
 
-    private init() {
-        hid_init()
-    }
+    private init() {}
 
     func start() {
         guard thread == nil else { return }
-        running = true
-        let t = Thread { [weak self] in self?.discoveryLoop() }
-        t.name = "DialManager discovery"
+        let t = Thread { [weak self] in self?.hidThreadMain() }
+        t.name = "DialManager HID"
         thread = t
         t.start()
     }
 
     func stop() {
-        running = false
-        semaphore.signal()
+        if let runLoop = runLoop {
+            CFRunLoopStop(runLoop)
+        }
         lock.lock()
-        let all = Array(dialsByPath.values)
+        let all = Array(dialsBySerial.values)
+        dialsBySerial.removeAll()
         lock.unlock()
         for dial in all {
             // Restore hardware defaults so the dial isn't left in an odd state.
             dial.haptics = false
             dial.wheelSensitivity = 36
-            dial.stop()
+            dial.close()
         }
     }
 
@@ -60,72 +61,77 @@ class DialManager {
         }
     }
 
-    private func discoveryLoop() {
-        hid_monitor { vendorId, productId, _ in
-            if vendorId == Dial.VendorId, productId == Dial.ProductId {
-                // C function pointer — can't capture, go through the singleton.
-                DialManager.shared.semaphore.signal()
-            }
-        }
+    // MARK: - HID runloop
 
-        while running {
-            openNewDials()
-            _ = semaphore.wait(timeout: .now() + .seconds(5))
-        }
+    private func hidThreadMain() {
+        let mgr = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        manager = mgr
+        runLoop = CFRunLoopGetCurrent()
+
+        let matching: [String: Any] = [
+            kIOHIDVendorIDKey: Dial.vendorId,
+            kIOHIDProductIDKey: Dial.productId,
+        ]
+        IOHIDManagerSetDeviceMatching(mgr, matching as CFDictionary)
+
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        IOHIDManagerRegisterDeviceMatchingCallback(mgr, { context, _, _, device in
+            Unmanaged<DialManager>.fromOpaque(context!).takeUnretainedValue().deviceMatched(device)
+        }, context)
+        IOHIDManagerRegisterDeviceRemovalCallback(mgr, { context, _, _, device in
+            Unmanaged<DialManager>.fromOpaque(context!).takeUnretainedValue().deviceRemoved(device)
+        }, context)
+
+        IOHIDManagerScheduleWithRunLoop(mgr, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDManagerOpen(mgr, IOOptionBits(kIOHIDOptionsTypeNone))
+
+        CFRunLoopRun()
+
+        IOHIDManagerClose(mgr, IOOptionBits(kIOHIDOptionsTypeNone))
     }
 
-    private func openNewDials() {
-        var paths: [String] = []
-        var info = hid_enumerate(Dial.VendorId, Dial.ProductId)
-        let head = info
-        while let cur = info {
-            if let cPath = cur.pointee.path {
-                paths.append(String(cString: cPath))
-            }
-            info = cur.pointee.next
-        }
-        hid_free_enumeration(head)
+    private func deviceMatched(_ device: IOHIDDevice) {
+        let serial = IOHIDDeviceGetProperty(device, kIOHIDSerialNumberKey as CFString) as? String ?? "unknown"
 
-        var changed = false
-        for path in paths {
-            lock.lock()
-            let alreadyOpen = dialsByPath[path] != nil
-            lock.unlock()
-            guard !alreadyOpen else { continue }
-            guard let dial = Dial(path: path) else {
-                // Usually means Input Monitoring permission is missing.
-                print("Found Surface Dial at \(path) but couldn't open it")
-                continue
-            }
+        lock.lock()
+        let alreadyOpen = dialsBySerial[serial] != nil
+        lock.unlock()
+        // A dial can surface as more than one matched HID service; one is enough.
+        guard !alreadyOpen else { return }
 
-            dial.onButtonStateChanged = { [weak self] dial, state in
-                self?.onButtonStateChanged?(dial, state)
-            }
-            dial.onRotation = { [weak self] dial, rotation in
-                self?.onRotation?(dial, rotation)
-            }
-            dial.onDisconnected = { [weak self] dial in
-                guard let self = self else { return }
-                self.lock.lock()
-                self.dialsByPath.removeValue(forKey: dial.path)
-                self.lock.unlock()
-                self.notifyChanged()
-                self.semaphore.signal() // re-enumerate soon
-            }
-
-            lock.lock()
-            dialsByPath[path] = dial
-            lock.unlock()
-
-            configureDial?(dial)
-            dial.start()
-            print("Opened Surface Dial \(dial.serialNumber)")
-            changed = true
+        guard let dial = Dial(device: device) else {
+            hidLog.error("Found Surface Dial \(serial, privacy: .public) but couldn't open it")
+            return
         }
 
-        if changed {
-            notifyChanged()
+        dial.onButtonStateChanged = { [weak self] dial, state in
+            self?.onButtonStateChanged?(dial, state)
         }
+        dial.onRotation = { [weak self] dial, rotation in
+            self?.onRotation?(dial, rotation)
+        }
+
+        lock.lock()
+        dialsBySerial[serial] = dial
+        lock.unlock()
+
+        configureDial?(dial)
+        hidLog.info("Opened Surface Dial \(dial.serialNumber, privacy: .public)")
+        notifyChanged()
+    }
+
+    private func deviceRemoved(_ device: IOHIDDevice) {
+        lock.lock()
+        let entry = dialsBySerial.first { $0.value.device == device }
+        if let entry = entry {
+            dialsBySerial.removeValue(forKey: entry.key)
+        }
+        lock.unlock()
+
+        guard let dial = entry?.value else { return }
+        dial.close()
+        hidLog.info("Surface Dial \(dial.serialNumber, privacy: .public) disconnected")
+        notifyChanged()
     }
 
     private func notifyChanged() {
