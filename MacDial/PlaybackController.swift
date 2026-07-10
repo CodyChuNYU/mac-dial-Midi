@@ -52,6 +52,41 @@ func runningKnownPlayer() -> NSRunningApplication? {
     return nil
 }
 
+/// Expands the macOS Now Playing panel in the menu bar by pressing Control
+/// Center's menu extra via the Accessibility API (covered by the permission
+/// the app already holds for posting events). Main thread only.
+func openNowPlayingPanel() {
+    guard let cc = NSRunningApplication
+        .runningApplications(withBundleIdentifier: "com.apple.controlcenter").first
+    else { return }
+
+    let app = AXUIElementCreateApplication(cc.processIdentifier)
+    var barRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &barRef) == .success,
+          let bar = barRef,
+          CFGetTypeID(bar) == AXUIElementGetTypeID()
+    else {
+        hidLog.error("Now Playing: couldn't read Control Center menu extras")
+        return
+    }
+
+    var kidsRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(bar as! AXUIElement, "AXChildren" as CFString, &kidsRef) == .success,
+          let items = kidsRef as? [AXUIElement]
+    else { return }
+
+    for item in items {
+        var identRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(item, "AXIdentifier" as CFString, &identRef)
+        if let ident = identRef as? String, ident == "com.apple.menuextra.now-playing" {
+            AXUIElementPerformAction(item, "AXPress" as CFString)
+            return
+        }
+    }
+    // Panel only exists while something is (recently) playing.
+    hidLog.info("Now Playing menu extra not present")
+}
+
 /// https://stackoverflow.com/a/55854051
 func HIDPostAuxKey(key: Int32, modifiers: [NSEvent.ModifierFlags], _repeat: Int = 1) {
     func doKey(down: Bool) {
@@ -108,7 +143,10 @@ class PlaybackController: Controller {
     private struct PressState {
         var rotated = false
         var skip = TickAccumulator()
+        let downTime = ProcessInfo.processInfo.systemUptime
     }
+
+    private static let longPressSeconds = 0.6
 
     private var lastClick = Date().timeIntervalSince1970
     private var pressStates: [String: PressState] = [:]
@@ -131,6 +169,14 @@ class PlaybackController: Controller {
         let state = pressStates.removeValue(forKey: dial.serialNumber)
         // Press-and-turn already skipped tracks; don't also play/pause.
         guard state?.rotated != true else { return }
+
+        // Long press (no rotation): expand the menu bar Now Playing panel.
+        if let state = state,
+           ProcessInfo.processInfo.systemUptime - state.downTime >= Self.longPressSeconds
+        {
+            DispatchQueue.main.async { openNowPlayingPanel() }
+            return
+        }
 
         let clickDelay = Date().timeIntervalSince1970 - lastClick
         lastClick = Date().timeIntervalSince1970
