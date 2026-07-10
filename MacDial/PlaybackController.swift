@@ -5,6 +5,41 @@ import Foundation
 /// Dedicated players, preferred over e.g. a browser that also makes noise.
 private let knownPlayerBundles = ["com.apple.Music", "com.spotify.client"]
 
+/// Maps a process to the one macOS holds responsible for it — how browser
+/// helper processes (which own the audio) resolve to the browser itself.
+private let responsiblePID: (@convention(c) (pid_t) -> pid_t)? = {
+    guard let sym = dlsym(dlopen(nil, RTLD_NOW), "responsibility_get_pid_responsible_for_pid")
+    else { return nil }
+    return unsafeBitCast(sym, to: (@convention(c) (pid_t) -> pid_t).self)
+}()
+
+/// The focusable app behind an audio-producing PID. Browsers play audio in
+/// helper processes (Chrome Helper, WebKit GPU), so a non-regular process is
+/// resolved via its responsible PID, then by bundle-ID prefix as a fallback.
+private func focusableApp(forAudioPID pid: pid_t) -> NSRunningApplication? {
+    if let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular {
+        return app
+    }
+    if let responsiblePID = responsiblePID {
+        let rpid = responsiblePID(pid)
+        if rpid > 0, rpid != pid,
+           let app = NSRunningApplication(processIdentifier: rpid),
+           app.activationPolicy == .regular
+        {
+            return app
+        }
+    }
+    // Helper bundle IDs usually extend the app's (com.google.Chrome.helper).
+    if let helperID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier?.lowercased() {
+        return NSWorkspace.shared.runningApplications.first { app in
+            guard app.activationPolicy == .regular,
+                  let bundleID = app.bundleIdentifier?.lowercased() else { return false }
+            return helperID.hasPrefix(bundleID)
+        }
+    }
+    return nil
+}
+
 /// The user-facing app currently producing audio output, found via
 /// CoreAudio's process objects (public API, no permissions needed).
 /// Catches anything — Music, Spotify, YouTube in a browser.
@@ -33,9 +68,10 @@ func audiblyPlayingApp() -> NSRunningApplication? {
     for object in objects {
         guard property(object, kAudioProcessPropertyIsRunningOutput) == 1,
               let pid = property(object, kAudioProcessPropertyPID),
-              let app = NSRunningApplication(processIdentifier: pid_t(pid)),
-              app.activationPolicy == .regular,
-              app.bundleIdentifier != Bundle.main.bundleIdentifier else { continue }
+              let app = focusableApp(forAudioPID: pid_t(pid)),
+              app.bundleIdentifier != Bundle.main.bundleIdentifier,
+              !audible.contains(where: { $0.processIdentifier == app.processIdentifier })
+        else { continue }
         audible.append(app)
     }
     return audible.first { knownPlayerBundles.contains($0.bundleIdentifier ?? "") } ?? audible.first
