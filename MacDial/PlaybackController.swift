@@ -160,7 +160,9 @@ class PlaybackController: Controller {
         let longPress: LongPressToken
     }
 
-    private static let longPressSeconds = 0.4
+    /// Just past a casual click (~0.1-0.2s), so peek feels instant without
+    /// eating play/pause presses.
+    private static let longPressSeconds = 0.25
 
     private var lastClick = Date().timeIntervalSince1970
     private var pressStates: [String: PressState] = [:]
