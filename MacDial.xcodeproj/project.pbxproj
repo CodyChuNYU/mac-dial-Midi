@@ -19,6 +19,11 @@
 		C89F315B2701266400A8B365 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C89F315A2701266400A8B365 /* CoreFoundation.framework */; };
 		C89F315D2701266A00A8B365 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C89F315C2701266A00A8B365 /* IOKit.framework */; };
 		C89F315F270126E100A8B365 /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C89F315E270126E100A8B365 /* AppKit.framework */; };
+		CAFE00012E100000000000B1 /* DialManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFE00012E100000000000A1 /* DialManager.swift */; };
+		CAFE00012E100000000000B2 /* ScrollEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFE00012E100000000000A2 /* ScrollEngine.swift */; };
+		CAFE00012E100000000000B3 /* ScrollTestPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFE00012E100000000000A3 /* ScrollTestPanel.swift */; };
+		CAFE00012E100000000000B4 /* MIDIManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFE00012E100000000000A4 /* MIDIManager.swift */; };
+		CAFE00012E100000000000B5 /* MidiController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFE00012E100000000000A5 /* MidiController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +43,11 @@
 		C89F315A2701266400A8B365 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
 		C89F315C2701266A00A8B365 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 		C89F315E270126E100A8B365 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
+		CAFE00012E100000000000A1 /* DialManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DialManager.swift; sourceTree = "<group>"; };
+		CAFE00012E100000000000A2 /* ScrollEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollEngine.swift; sourceTree = "<group>"; };
+		CAFE00012E100000000000A3 /* ScrollTestPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollTestPanel.swift; sourceTree = "<group>"; };
+		CAFE00012E100000000000A4 /* MIDIManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MIDIManager.swift; sourceTree = "<group>"; };
+		CAFE00012E100000000000A5 /* MidiController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MidiController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,10 +94,23 @@
 				C882FA2626F1430D00595EE1 /* MacDial.entitlements */,
 				C882FA1F26F1430D00595EE1 /* Preview Content */,
 				C89F31582701090400A8B365 /* Dial.swift */,
+				CAFE00012E100000000000A1 /* DialManager.swift */,
+				CAFE00012E100000000000A2 /* ScrollEngine.swift */,
+				CAFE00012E100000000000A3 /* ScrollTestPanel.swift */,
+				CAFE00012E100000000000C1 /* MIDI */,
 				C89D242A2703CF4500B1A458 /* ScrollController.swift */,
 				C89D242C2704870C00B1A458 /* PlaybackController.swift */,
 			);
 			path = MacDial;
+			sourceTree = "<group>";
+		};
+		CAFE00012E100000000000C1 /* MIDI */ = {
+			isa = PBXGroup;
+			children = (
+				CAFE00012E100000000000A4 /* MIDIManager.swift */,
+				CAFE00012E100000000000A5 /* MidiController.swift */,
+			);
+			path = MIDI;
 			sourceTree = "<group>";
 		};
 		C882FA1F26F1430D00595EE1 /* Preview Content */ = {
@@ -183,6 +206,11 @@
 				C89D24292703BA5E00B1A458 /* Controller.swift in Sources */,
 				C89D242D2704870C00B1A458 /* PlaybackController.swift in Sources */,
 				C89F31592701090400A8B365 /* Dial.swift in Sources */,
+				CAFE00012E100000000000B1 /* DialManager.swift in Sources */,
+				CAFE00012E100000000000B2 /* ScrollEngine.swift in Sources */,
+				CAFE00012E100000000000B3 /* ScrollTestPanel.swift in Sources */,
+				CAFE00012E100000000000B4 /* MIDIManager.swift in Sources */,
+				CAFE00012E100000000000B5 /* MidiController.swift in Sources */,
 				C89D242B2703CF4500B1A458 /* ScrollController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -252,7 +280,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -307,7 +335,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -323,6 +351,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MacDial/MacDial.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 83QH7UZ727;
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"MacDial/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
@@ -333,9 +362,9 @@
 					"@executable_path/../Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/lib/hidapi/build/src/mac";
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				OTHER_LDFLAGS = "-lhidapi";
-				PRODUCT_BUNDLE_IDENTIFIER = com.andreasjhkarlsson.MacDial;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codychu.MacDial;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/MacDial/MacDial-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -349,6 +378,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MacDial/MacDial.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 83QH7UZ727;
 				COMBINE_HIDPI_IMAGES = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"MacDial/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
@@ -360,9 +390,9 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/lib/hidapi/build/src/mac";
 				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(SRCROOT)/lib/hidapi/build_x86/src/mac";
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				OTHER_LDFLAGS = "-lhidapi";
-				PRODUCT_BUNDLE_IDENTIFIER = com.andreasjhkarlsson.MacDial;
+				PRODUCT_BUNDLE_IDENTIFIER = com.codychu.MacDial;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/MacDial/MacDial-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

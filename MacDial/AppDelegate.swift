@@ -1,20 +1,15 @@
-
 import Cocoa
-import SwiftUI
 
 @main
 class AppDelegate: NSObject, NSApplicationDelegate {
-
     var statusBarController: StatusBarController?
-    let dial = Dial()
 
-    func applicationDidFinishLaunching(_ aNotification: Notification) {
-        dial.start();
-        statusBarController = StatusBarController.init(dial)
+    func applicationDidFinishLaunching(_: Notification) {
+        statusBarController = StatusBarController(DialManager.shared)
+        DialManager.shared.start()
     }
 
-    func applicationWillTerminate(_ aNotification: Notification) {
-        dial.stop();
+    func applicationWillTerminate(_: Notification) {
+        DialManager.shared.stop()
     }
 }
-

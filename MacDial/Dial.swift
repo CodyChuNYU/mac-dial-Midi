@@ -1,316 +1,171 @@
-
 import Foundation
-import AppKit
-import Cocoa
-import SwiftUI
 
 extension NSString {
     convenience init(wcharArray: UnsafeMutablePointer<wchar_t>) {
         self.init(bytes: UnsafePointer(wcharArray),
-                        length: wcslen(wcharArray) * MemoryLayout<wchar_t>.stride,
-                        encoding: String.Encoding.utf32LittleEndian.rawValue)!
+                  length: wcslen(wcharArray) * MemoryLayout<wchar_t>.stride,
+                  encoding: String.Encoding.utf32LittleEndian.rawValue)!
     }
 }
 
-class Dial
-{
+/// One physical Surface Dial, opened by HID path. Reading happens on a
+/// dedicated thread; callbacks fire on that thread.
+class Dial {
+    static let VendorId: UInt16 = 0x045E
+    static let ProductId: UInt16 = 0x091B
+
     enum ButtonState {
         case pressed
         case released
     }
-    
+
     enum Rotation {
-        case Clockwise (Int)
-        case CounterClockwise (Int)
+        case Clockwise(Int)
+        case CounterClockwise(Int)
+
+        var ticks: Int {
+            switch self {
+            case let .Clockwise(d): return d
+            case let .CounterClockwise(d): return -d
+            }
+        }
     }
-    
-    enum InputReport
-    {
+
+    private enum InputReport {
         case dial(ButtonState, Rotation?)
         case unknown
+        case timeout
     }
-    
-    class Device
-    {
-        private struct ReadBuffer {
-            let pointer: UnsafeMutablePointer<UInt8>
-            let size: Int
-            init(size: Int) {
-                self.size = size
-                pointer = UnsafeMutablePointer<UInt8>.allocate(capacity: size)
-            }
-        }
-        
-        // Identifiers for the Surface Dial
-        static let VendorId: UInt16 = 0x045E
-        static let ProductId: UInt16 = 0x091B
-        private var dev: OpaquePointer?
-        private let readBuffer = ReadBuffer(size: 1024)
-        
-        var wheelSensivitity = 36
-        
-        var scrollDirection = 1
-        
-        var haptics = false
-        
-        init() {
-            
-        }
-        
-        var isConnected: Bool {
-            get {
-                return dev != nil
-            }
-        }
-        
-        var manufacturer: String {
-            get {
-                
-                guard let dev = self.dev else {
-                    return ""
-                }
-                
-                let buffer = UnsafeMutablePointer<wchar_t>.allocate(capacity: 255)
-                
-                hid_get_manufacturer_string(dev, buffer, 255)
-                
-                return NSString(wcharArray: buffer) as String
-            }
-        }
-        
-        var serialNumber: String {
-            get {
-                guard let dev = self.dev else {
-                    return ""
-                }
-                
-                let buffer = UnsafeMutablePointer<wchar_t>.allocate(capacity: 255)
-                hid_get_serial_number_string(dev, buffer, 255)
-                    
-                return NSString(wcharArray: buffer) as String
-            }
-        }
-        
-        @discardableResult
-        func connect() -> Bool {
-            dev = hid_open(Dial.Device.VendorId, Dial.Device.ProductId, nil)
-            return isConnected
-        }
-        
-        
-        func disconnect() {
-            if let dev = self.dev {
-                hid_close(dev)
-            }
-            dev = nil
-        }
-        
-        // https://github.com/daniel5151/surface-dial-linux/blob/main/src/dial_device/haptics.rs
-        func updateSensitivity() {
-            if isConnected {
-                let steps_lo = wheelSensivitity & 0xff;
-                let steps_hi = (wheelSensivitity >> 8) & 0xff;
-                var buf: Array<UInt8> = []
-                buf.append(1)
-                buf.append(UInt8(steps_lo)) // steps
-                buf.append(UInt8(steps_hi)) // steps
-                buf.append(0x00) // Repeat Count
-                buf.append(self.haptics ? 0x03 : 0x02) // auto trigger
-                buf.append(0x00) // Waveform Cutoff Time
-                buf.append(0x00) // retrigger period
-                buf.append(0x00) // retrigger period
-                
-                hid_send_feature_report(dev, buf, 8)
-            }
-        }
-        
-        func impact(repeatCount: UInt8 = 0) {
-            if isConnected {
-                var buf: Array<UInt8> = []
-                buf.append(0x01) // Report ID
-                buf.append(repeatCount) // RepeatCount
-                buf.append(0x03) // ManualTrigger
-                buf.append(0x00) // RetriggerPeriod (lo)
-                buf.append(0x00) // RetriggerPeriod (hi)
-                hid_write(dev, buf, 5)
-            }
-        }
-        
-        private func parse(bytes: UnsafeMutableBufferPointer<UInt8>) -> InputReport {
-            switch bytes[0] {
-            case 1 where bytes.count >= 4:
-                
-                let buttonState = bytes[1]&1 == 1 ? ButtonState.pressed : .released
-                
-                let rotation = { () -> Rotation? in
-                    switch bytes[2] {
-                        case 1:
-                            return .Clockwise(1)
-                        case 0xff:
-                            return .CounterClockwise(1)
-                        default:
-                            return nil
-                }}()
-                
-                return .dial(buttonState, rotation)
-            default:
-                return .unknown
-            }
-        }
-        
-        func read() -> InputReport?
-        {
-            guard let dev = self.dev else {
-                return nil
-            }
-            
-            let readBytes = hid_read(dev, readBuffer.pointer, readBuffer.size)
-            
-            if readBytes <= 0 {
-                print("Device disconnected")
-                self.dev = nil;
-                return nil;
-            }
-            
-            let array = UnsafeMutableBufferPointer(start: readBuffer.pointer, count: Int(readBytes))
-            
-            let dataStr = array.map({ String(format:"%02X", $0)}).joined(separator: " ")
-            print("Read data from device: \(dataStr)")
-            
-            return parse(bytes: array)
-        }
-    }
-    
+
+    let path: String
+    let serialNumber: String
+
+    private var dev: OpaquePointer?
     private var thread: Thread?
-    private var run: Bool = false
-    let device = Device()
-    private let semaphore = DispatchSemaphore(value: 0)
+    private var running = false
+    private let readBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
     private var lastButtonState = ButtonState.released
-    
-    var onButtonStateChanged: ((ButtonState) -> Void)?
-    var onRotation: ((Rotation, Int) -> Void)?
-    
-    var wheelSensitivity: Int {
-        get {
-            return device.wheelSensivitity
-        }
-        
-        set (value) {
-            device.wheelSensivitity = value
-            device.updateSensitivity()
-        }
+
+    var onButtonStateChanged: ((Dial, ButtonState) -> Void)?
+    var onRotation: ((Dial, Rotation) -> Void)?
+    var onDisconnected: ((Dial) -> Void)?
+
+    /// Steps per full revolution reported by the hardware (18...3600).
+    var wheelSensitivity: Int = 36 {
+        didSet { updateSensitivity() }
     }
-    
-    var scrollDirection: Int {
-        get {
-            return device.scrollDirection
-        }
-        
-        set (value) {
-            device.scrollDirection = value
-        }
+
+    var haptics: Bool = false {
+        didSet { updateSensitivity() }
     }
-    
-    var haptics: Bool {
-        get {
-            return device.haptics
-        }
-        
-        set (value) {
-            device.haptics = value
-            device.updateSensitivity()
-        }
+
+    init?(path: String) {
+        guard let dev = hid_open_path(path) else { return nil }
+        self.dev = dev
+        self.path = path
+
+        let buffer = UnsafeMutablePointer<wchar_t>.allocate(capacity: 255)
+        defer { buffer.deallocate() }
+        buffer[0] = 0
+        hid_get_serial_number_string(dev, buffer, 255)
+        serialNumber = buffer[0] != 0 ? (NSString(wcharArray: buffer) as String) : path
     }
-    
-    init() {
-        hid_init()
-    }
-    
+
     deinit {
         stop()
-        hid_exit()
+        readBuffer.deallocate()
     }
-    
-    func start() {
-        self.thread = Thread(target: self, selector: #selector(threadProc(arg:)), object: nil);
-        
-        run = true;
-        thread!.start()
-    }
-    
-    func stop() {
-        self.haptics = false
-        self.wheelSensitivity = 36
-        run = false;
-        if let thread = self.thread {
-            semaphore.signal()
-            device.disconnect()
-            while !thread.isFinished { }
-            self.thread = nil;
-        }
-        
-    }
-    
-    private func connect() -> Bool
-    {
-        return false
-    }
-    
-    @objc
-    private func threadProc(arg: NSObject) {
-        
-        hid_monitor { vendorId, productId, serialNumber in
-            if (vendorId==Device.VendorId && productId==Device.ProductId) {
-                DispatchQueue.main.async {
-                    // We cannot capture 'self' here since this is a c function pointer
-                    // Luckily we can find ourselves again through the AppDelegate
-                    let app = NSApplication.shared.delegate as! AppDelegate
-                    app.dial.semaphore.signal()
-                }
 
+    var isConnected: Bool {
+        dev != nil
+    }
+
+    func start() {
+        guard thread == nil else { return }
+        running = true
+        updateSensitivity()
+        let t = Thread { [weak self] in self?.readLoop() }
+        t.name = "Dial \(serialNumber)"
+        thread = t
+        t.start()
+    }
+
+    func stop() {
+        running = false
+        // Reader uses hid_read_timeout, so it notices `running` within ~250ms
+        // and closes the handle itself.
+        thread = nil
+    }
+
+    /// https://github.com/daniel5151/surface-dial-linux/blob/main/src/dial_device/haptics.rs
+    private func updateSensitivity() {
+        guard let dev = dev else { return }
+        let steps = wheelSensitivity
+        var buf: [UInt8] = [
+            0x01, // Report ID
+            UInt8(steps & 0xFF), // steps lo
+            UInt8((steps >> 8) & 0xFF), // steps hi
+            0x00, // repeat count
+            haptics ? 0x03 : 0x02, // auto trigger
+            0x00, // waveform cutoff time
+            0x00, 0x00, // retrigger period
+        ]
+        hid_send_feature_report(dev, &buf, 8)
+    }
+
+    func impact(repeatCount: UInt8 = 0) {
+        guard let dev = dev else { return }
+        var buf: [UInt8] = [0x01, repeatCount, 0x03, 0x00, 0x00]
+        hid_write(dev, &buf, 5)
+    }
+
+    private func parse(count: Int) -> InputReport {
+        guard count >= 3, readBuffer[0] == 1 else { return .unknown }
+
+        let buttonState: ButtonState = readBuffer[1] & 1 == 1 ? .pressed : .released
+
+        // Signed delta; several detents can coalesce into one report at
+        // high sensitivity, so this is not always ±1.
+        let delta = Int(Int8(bitPattern: readBuffer[2]))
+        let rotation: Rotation?
+        switch delta {
+        case 0: rotation = nil
+        case ..<0: rotation = .CounterClockwise(-delta)
+        default: rotation = .Clockwise(delta)
+        }
+
+        return .dial(buttonState, rotation)
+    }
+
+    private func read() -> InputReport? {
+        guard let dev = dev else { return nil }
+        let n = hid_read_timeout(dev, readBuffer, 64, 250)
+        if n < 0 { return nil } // device gone
+        if n == 0 { return .timeout } // no data; loop re-checks `running`
+        return parse(count: Int(n))
+    }
+
+    private func readLoop() {
+        while running {
+            switch read() {
+            case let .dial(buttonState, rotation):
+                if buttonState != lastButtonState {
+                    lastButtonState = buttonState
+                    onButtonStateChanged?(self, buttonState)
+                }
+                if let rotation = rotation {
+                    onRotation?(self, rotation)
+                }
+            case .timeout, .unknown:
+                continue
+            case nil:
+                running = false
             }
         }
-        
-        while run {
-            
-            if !device.isConnected {
-                print("Trying to open device...")
-                if device.connect() {
-                    print("Device \(device.serialNumber) opened.")
-                    device.updateSensitivity() // thanks @bernhard-adobe
-                } else {
-                    print("Device couldn't be opened.")
-                }
-            }
-            
-            while device.isConnected {
-                
-                switch device.read() {
-                
-                case .dial(let buttonState, let rotation):
-                    
-                    switch buttonState {
-                    case .pressed where lastButtonState == .released:
-                        onButtonStateChanged?(.pressed)
-                    case .released where lastButtonState == .pressed:
-                        onButtonStateChanged?(.released)
-                    default: break
-                    }
-                    
-                    if rotation != nil {
-                        onRotation?(rotation!, scrollDirection)
-                    }
-                    
-                    self.lastButtonState = buttonState
-                
-                case .unknown:
-                    print("Unknown input report.")
-                case nil:
-                    print("Device disconnected.")
-                }
-            }
-            
-            let _ = semaphore.wait(timeout: .now().advanced(by: .seconds(60)))
+        if let dev = dev {
+            hid_close(dev)
+            self.dev = nil
         }
+        onDisconnected?(self)
     }
 }
