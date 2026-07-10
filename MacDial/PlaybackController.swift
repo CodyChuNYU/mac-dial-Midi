@@ -89,11 +89,11 @@ class PlaybackController: Controller {
 
     func onRotate(dial: Dial, rotation: Dial.Rotation, direction _: Int) {
         if var state = pressStates[dial.serialNumber] {
-            // Press-and-turn: one track skip per 1/16 revolution (22.5°).
+            // Press-and-turn: one track skip per 1/32 revolution (11.25°).
             state.rotated = true
             let steps = state.skip.steps(ticks: rotation.ticks,
                                          ticksPerRevolution: dial.wheelSensitivity,
-                                         stepsPerRevolution: 16)
+                                         stepsPerRevolution: 32)
             pressStates[dial.serialNumber] = state
             if steps != 0 {
                 let key = steps > 0 ? NX_KEYTYPE_NEXT : NX_KEYTYPE_PREVIOUS
