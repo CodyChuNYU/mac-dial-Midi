@@ -1,5 +1,56 @@
 import AppKit
+import CoreAudio
 import Foundation
+
+/// Dedicated players, preferred over e.g. a browser that also makes noise.
+private let knownPlayerBundles = ["com.apple.Music", "com.spotify.client"]
+
+/// The user-facing app currently producing audio output, found via
+/// CoreAudio's process objects (public API, no permissions needed).
+/// Catches anything — Music, Spotify, YouTube in a browser.
+func audiblyPlayingApp() -> NSRunningApplication? {
+    var listAddr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject),
+                                         &listAddr, 0, nil, &size) == noErr, size > 0 else { return nil }
+    var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
+                                     &listAddr, 0, nil, &size, &objects) == noErr else { return nil }
+
+    func property(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> UInt32? {
+        var addr = AudioObjectPropertyAddress(mSelector: selector,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var value: UInt32 = 0
+        var valueSize = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(object, &addr, 0, nil, &valueSize, &value) == noErr else { return nil }
+        return value
+    }
+
+    var audible: [NSRunningApplication] = []
+    for object in objects {
+        guard property(object, kAudioProcessPropertyIsRunningOutput) == 1,
+              let pid = property(object, kAudioProcessPropertyPID),
+              let app = NSRunningApplication(processIdentifier: pid_t(pid)),
+              app.activationPolicy == .regular,
+              app.bundleIdentifier != Bundle.main.bundleIdentifier else { continue }
+        audible.append(app)
+    }
+    return audible.first { knownPlayerBundles.contains($0.bundleIdentifier ?? "") } ?? audible.first
+}
+
+/// Fallback when nothing is audible (e.g. already paused): a running
+/// dedicated player app.
+func runningKnownPlayer() -> NSRunningApplication? {
+    for bundle in knownPlayerBundles {
+        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first {
+            return app
+        }
+    }
+    return nil
+}
 
 /// https://stackoverflow.com/a/55854051
 func HIDPostAuxKey(key: Int32, modifiers: [NSEvent.ModifierFlags], _repeat: Int = 1) {
@@ -52,7 +103,7 @@ struct VolumeControl {
 }
 
 /// Playback mode: rotate = volume (accelerated), press = play/pause,
-/// double-press = next track, press-and-turn = skip tracks.
+/// double-press = focus the app that's playing, press-and-turn = skip tracks.
 class PlaybackController: Controller {
     private struct PressState {
         var rotated = false
@@ -62,6 +113,7 @@ class PlaybackController: Controller {
     private var lastClick = Date().timeIntervalSince1970
     private var pressStates: [String: PressState] = [:]
     private var volume = VolumeControl()
+    private var lastAudibleApp: NSRunningApplication? // main queue only
 
     func onDown(dial: Dial) {
         pressStates[dial.serialNumber] = PressState()
@@ -73,18 +125,22 @@ class PlaybackController: Controller {
         guard state?.rotated != true else { return }
 
         let clickDelay = Date().timeIntervalSince1970 - lastClick
-
-        // Next song on double click
-        if clickDelay < 0.5 {
-            // Undo pause sent on first click
-            HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
-
-            HIDPostAuxKey(key: NX_KEYTYPE_NEXT, modifiers: [])
-        } else { // Play / Pause on single click
-            HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
-        }
-
         lastClick = Date().timeIntervalSince1970
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if clickDelay < 0.5 { // Double click: focus the playing app
+                // Undo pause sent on first click
+                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+                let app = self.lastAudibleApp ?? audiblyPlayingApp() ?? runningKnownPlayer()
+                app?.activate()
+            } else { // Play / Pause on single click
+                // Snapshot who's audible before the pause silences them, so a
+                // second click knows where to go.
+                self.lastAudibleApp = audiblyPlayingApp()
+                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+            }
+        }
     }
 
     func onRotate(dial: Dial, rotation: Dial.Rotation, direction _: Int) {
