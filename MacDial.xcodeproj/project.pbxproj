@@ -25,6 +25,7 @@
 		CAFE00012E100000000000B4 /* MIDIManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFE00012E100000000000A4 /* MIDIManager.swift */; };
 		CAFE00012E100000000000B5 /* MidiController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFE00012E100000000000A5 /* MidiController.swift */; };
 		CAFE00012E100000000000B6 /* ScrollMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFE00012E100000000000A6 /* ScrollMath.swift */; };
+		CAFE00012E100000000000B7 /* MediaRemote.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAFE00012E100000000000A7 /* MediaRemote.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +49,7 @@
 		CAFE00012E100000000000A4 /* MIDIManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MIDIManager.swift; sourceTree = "<group>"; };
 		CAFE00012E100000000000A5 /* MidiController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MidiController.swift; sourceTree = "<group>"; };
 		CAFE00012E100000000000A6 /* ScrollMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollMath.swift; sourceTree = "<group>"; };
+		CAFE00012E100000000000A7 /* MediaRemote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaRemote.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -96,6 +98,7 @@
 				CAFE00012E100000000000A1 /* DialManager.swift */,
 				CAFE00012E100000000000A2 /* ScrollEngine.swift */,
 				CAFE00012E100000000000A6 /* ScrollMath.swift */,
+				CAFE00012E100000000000A7 /* MediaRemote.swift */,
 				CAFE00012E100000000000A3 /* ScrollTestPanel.swift */,
 				CAFE00012E100000000000C1 /* MIDI */,
 				C89D242A2703CF4500B1A458 /* ScrollController.swift */,
@@ -209,6 +212,7 @@
 				CAFE00012E100000000000B1 /* DialManager.swift in Sources */,
 				CAFE00012E100000000000B2 /* ScrollEngine.swift in Sources */,
 				CAFE00012E100000000000B6 /* ScrollMath.swift in Sources */,
+				CAFE00012E100000000000B7 /* MediaRemote.swift in Sources */,
 				CAFE00012E100000000000B3 /* ScrollTestPanel.swift in Sources */,
 				CAFE00012E100000000000B4 /* MIDIManager.swift in Sources */,
 				CAFE00012E100000000000B5 /* MidiController.swift in Sources */,

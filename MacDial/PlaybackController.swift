@@ -52,49 +52,89 @@ struct VolumeControl {
 }
 
 /// Playback mode: rotate = volume (accelerated), press = play/pause,
-/// double-press = next track, press-and-turn = skip tracks.
+/// double-press = next track, press-and-turn = scrub through the song
+/// (falls back to track skipping when no scriptable player is running).
 class PlaybackController: Controller {
-    private struct PressState {
-        var rotated = false
+    private static let scrubSecondsPerRevolution = 60.0
+
+    /// One press-and-turn session. Everything here runs on the main queue.
+    private final class ScrubSession {
+        var started = false
+        var base: PlayerPosition? // nil after start = fall back to skipping
+        var offset = 0.0
+        var lastSend = 0.0
         var skip = TickAccumulator()
     }
 
     private var lastClick = Date().timeIntervalSince1970
-    private var pressStates: [String: PressState] = [:]
+    private var sessions: [String: ScrubSession] = [:] // by dial serial
     private var volume = VolumeControl()
 
     func onDown(dial: Dial) {
-        pressStates[dial.serialNumber] = PressState()
+        let session = ScrubSession()
+        DispatchQueue.main.async { [weak self] in
+            self?.sessions[dial.serialNumber] = session
+        }
     }
 
     func onUp(dial: Dial) {
-        let state = pressStates.removeValue(forKey: dial.serialNumber)
-        // Press-and-turn already skipped tracks; don't also play/pause.
-        guard state?.rotated != true else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let session = self.sessions.removeValue(forKey: dial.serialNumber)
 
-        let clickDelay = Date().timeIntervalSince1970 - lastClick
+            if let session = session, session.started {
+                // Press-and-turn: flush the final scrub position, no play/pause.
+                if session.base != nil {
+                    self.sendScrub(session, force: true)
+                }
+                return
+            }
 
-        // Next song on double click
-        if clickDelay < 0.5 {
-            // Undo pause sent on first click
-            HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+            let clickDelay = Date().timeIntervalSince1970 - self.lastClick
 
-            HIDPostAuxKey(key: NX_KEYTYPE_NEXT, modifiers: [])
-        } else { // Play / Pause on single click
-            HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+            // Next song on double click
+            if clickDelay < 0.5 {
+                // Undo pause sent on first click
+                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+
+                HIDPostAuxKey(key: NX_KEYTYPE_NEXT, modifiers: [])
+            } else { // Play / Pause on single click
+                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+            }
+
+            self.lastClick = Date().timeIntervalSince1970
         }
-
-        lastClick = Date().timeIntervalSince1970
     }
 
     func onRotate(dial: Dial, rotation: Dial.Rotation, direction _: Int) {
-        if var state = pressStates[dial.serialNumber] {
-            // Press-and-turn: one track skip per 1/16 revolution (22.5°).
-            state.rotated = true
-            let steps = state.skip.steps(ticks: rotation.ticks,
-                                         ticksPerRevolution: dial.wheelSensitivity,
-                                         stepsPerRevolution: 16)
-            pressStates[dial.serialNumber] = state
+        let ticks = rotation.ticks
+        let ticksPerRev = dial.wheelSensitivity
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if let session = self.sessions[dial.serialNumber] {
+                self.scrub(session, ticks: ticks, ticksPerRevolution: ticksPerRev)
+            } else {
+                self.volume.rotate(ticks: ticks, ticksPerRevolution: ticksPerRev)
+            }
+        }
+    }
+
+    // MARK: - Scrubbing (main queue)
+
+    private func scrub(_ session: ScrubSession, ticks: Int, ticksPerRevolution: Int) {
+        if !session.started {
+            session.started = true
+            if MediaRemote.canSeek {
+                session.base = queryPlayerPosition() // one AppleScript read per session
+            }
+        }
+
+        guard session.base != nil else {
+            // No scriptable player: skip tracks instead, 1/16 rev each.
+            let steps = session.skip.steps(ticks: ticks,
+                                           ticksPerRevolution: ticksPerRevolution,
+                                           stepsPerRevolution: 16)
             if steps != 0 {
                 let key = steps > 0 ? NX_KEYTYPE_NEXT : NX_KEYTYPE_PREVIOUS
                 HIDPostAuxKey(key: key, modifiers: [], _repeat: abs(steps))
@@ -102,6 +142,19 @@ class PlaybackController: Controller {
             return
         }
 
-        volume.rotate(ticks: rotation.ticks, ticksPerRevolution: dial.wheelSensitivity)
+        session.offset += Double(ticks) / Double(ticksPerRevolution) * Self.scrubSecondsPerRevolution
+        sendScrub(session, force: false)
+    }
+
+    private func sendScrub(_ session: ScrubSession, force: Bool) {
+        guard let base = session.base else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard force || now - session.lastSend > 0.1 else { return } // ~10Hz
+        session.lastSend = now
+
+        var target = base.position + session.offset
+        let upperBound = (base.duration ?? .greatestFiniteMagnitude) - 1
+        target = max(0, min(target, upperBound))
+        MediaRemote.setElapsedTime(target)
     }
 }
