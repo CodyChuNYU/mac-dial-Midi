@@ -48,7 +48,6 @@ enum Mode: String, CaseIterable {
 }
 
 class StatusBarController {
-    private let statusBar = NSStatusBar()
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private let manager: DialManager
@@ -105,14 +104,20 @@ class StatusBarController {
 
     init(_ manager: DialManager) {
         self.manager = manager
-        statusItem = statusBar.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.menu = menu
         menu.minimumWidth = 260
 
         if let button = statusItem.button {
-            button.image = #imageLiteral(resourceName: "icon-scroll")
-            button.image?.size = NSSize(width: 18, height: 18)
-            button.imagePosition = .imageLeft
+            if let symbol = NSImage(systemSymbolName: "dial.min.fill",
+                                    accessibilityDescription: "Mac Dial")
+            {
+                symbol.isTemplate = true
+                button.image = symbol
+                button.imagePosition = .imageOnly
+            } else {
+                button.title = "◐"
+            }
         }
 
         manager.configureDial = { [weak self] dial in
