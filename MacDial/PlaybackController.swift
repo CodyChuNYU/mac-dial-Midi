@@ -185,8 +185,7 @@ class PlaybackController: Controller {
         // While held, force coarse clicky detents so each song skip is a felt
         // tick — regardless of the global haptics setting. 30 detents/rev
         // (12° per click) — one felt click is exactly one song.
-        dial.wheelSensitivity = 30
-        dial.haptics = true
+        dial.configure(sensitivity: 30, haptics: true)
         // Long press (no rotation): expand the menu bar Now Playing panel,
         // as soon as the threshold passes — no release needed.
         let token = LongPressToken()

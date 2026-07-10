@@ -38,13 +38,32 @@ final class Dial {
     var onButtonStateChanged: ((Dial, ButtonState) -> Void)?
     var onRotation: ((Dial, Rotation) -> Void)?
 
+    /// Feature/output reports are synchronous BLE round-trips; sending them
+    /// from the input-report thread stalls rotation delivery, so they go
+    /// through this serial queue instead.
+    private let reportQueue = DispatchQueue(label: "dial.reports", qos: .userInteractive)
+
+    private var _wheelSensitivity = 36
+    private var _haptics = false
+
     /// Steps per full revolution reported by the hardware (18...3600).
-    var wheelSensitivity: Int = 36 {
-        didSet { updateSensitivity() }
+    var wheelSensitivity: Int {
+        get { _wheelSensitivity }
+        set { configure(sensitivity: newValue, haptics: _haptics) }
     }
 
-    var haptics: Bool = false {
-        didSet { updateSensitivity() }
+    var haptics: Bool {
+        get { _haptics }
+        set { configure(sensitivity: _wheelSensitivity, haptics: newValue) }
+    }
+
+    /// Sets both knobs with a single feature report (one BLE round-trip).
+    func configure(sensitivity: Int, haptics: Bool) {
+        _wheelSensitivity = sensitivity
+        _haptics = haptics
+        reportQueue.async { [weak self] in
+            self?.sendSensitivityReport(steps: sensitivity, haptics: haptics)
+        }
     }
 
     init?(device: IOHIDDevice) {
@@ -78,6 +97,7 @@ final class Dial {
 
     func close() {
         guard isOpen else { return }
+        reportQueue.sync {} // flush queued reports (e.g. the shutdown restore)
         isOpen = false
         IOHIDDeviceRegisterInputReportCallback(device, reportBuffer, 64, nil, nil)
         IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
@@ -86,8 +106,7 @@ final class Dial {
     // MARK: - Reports
 
     /// https://github.com/daniel5151/surface-dial-linux/blob/main/src/dial_device/haptics.rs
-    private func updateSensitivity() {
-        let steps = wheelSensitivity
+    private func sendSensitivityReport(steps: Int, haptics: Bool) {
         var buf: [UInt8] = [
             0x01, // Report ID
             UInt8(steps & 0xFF), // steps lo
@@ -101,8 +120,10 @@ final class Dial {
     }
 
     func impact(repeatCount: UInt8 = 0) {
-        var buf: [UInt8] = [0x01, repeatCount, 0x03, 0x00, 0x00]
-        setReport(type: kIOHIDReportTypeOutput, data: &buf)
+        reportQueue.async { [weak self] in
+            var buf: [UInt8] = [0x01, repeatCount, 0x03, 0x00, 0x00]
+            self?.setReport(type: kIOHIDReportTypeOutput, data: &buf)
+        }
     }
 
     private func setReport(type: IOHIDReportType, data: inout [UInt8]) {

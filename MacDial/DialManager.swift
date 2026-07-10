@@ -48,8 +48,7 @@ final class DialManager {
         lock.unlock()
         for dial in all {
             // Restore hardware defaults so the dial isn't left in an odd state.
-            dial.haptics = false
-            dial.wheelSensitivity = 36
+            dial.configure(sensitivity: 36, haptics: false)
             dial.close()
         }
     }

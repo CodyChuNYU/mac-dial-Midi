@@ -211,8 +211,8 @@ class StatusBarController {
             // identical either way — only the feel changes.
             // (Playback press-and-turn overrides this while held: see
             // PlaybackController.onDown.)
-            dial.wheelSensitivity = self.haptics ? self.wheelSensitivity.steps : 360
-            dial.haptics = self.haptics
+            dial.configure(sensitivity: self.haptics ? self.wheelSensitivity.steps : 360,
+                           haptics: self.haptics)
         }
 
         manager.onButtonStateChanged = { [weak self] dial, state in
