@@ -40,6 +40,24 @@ enum ScrollMathTests {
         assertClose(ScrollMath.releasePortion(pending: 1.2, dt: 1.0 / 120, tau: 0.045), 1.2, "tail flushes exactly")
         assert(ScrollMath.releasePortion(pending: 0, dt: 1.0 / 120, tau: 0.045) == 0, "zero pending emits nothing")
 
+        // Regression: the engine's whole-pixel emit loop must fully drain a
+        // SMALL pool (2-5px once rounded to zero pixels per frame forever).
+        var pending = 3.0
+        var residual = 0.0
+        var wholeEmitted = 0
+        for _ in 0 ..< 60 { // half a second at 120Hz
+            let portion = ScrollMath.releasePortion(pending: pending, dt: 1.0 / 120, tau: 0.045)
+            pending -= portion
+            residual += portion
+            // Mirrors the engine: truncate mid-gesture, snap to nearest once
+            // the pool is empty so float error can't strand the last pixel.
+            let emit = Int(residual.rounded(pending == 0 ? .toNearestOrAwayFromZero : .towardZero))
+            residual -= Double(emit)
+            wholeEmitted += emit
+        }
+        assert(pending == 0, "small pool must drain, \(pending)px left stranded")
+        assert(wholeEmitted == 3, "all 3 whole pixels must be emitted, got \(wholeEmitted)")
+
         // Velocity tracker: steady 1 rev/s input reads ~1 rev/s; stale
         // samples fall out of the window.
         var tracker = VelocityTracker()

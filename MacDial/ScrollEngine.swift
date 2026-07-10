@@ -58,6 +58,8 @@ final class ScrollEngine: NSObject {
 
     /// Pixels waiting to be emitted (signed, sub-pixel precision).
     private var pendingPixels: Double = 0
+    /// Fractional pixels carried between frames so nothing is lost to rounding.
+    private var emitResidual: Double = 0
     // Sliding window of (timestamp ns, revolutions) for velocity estimation.
     private var recentRevs: [(t: UInt64, revs: Double)] = []
     private var lastDrainNS: UInt64 = 0
@@ -102,6 +104,7 @@ final class ScrollEngine: NSObject {
         // rubber-bands against buffered pixels from the old direction.
         if pendingPixels != 0, (pendingPixels < 0) != (pixels < 0) {
             pendingPixels = 0
+            emitResidual = 0
         }
         pendingPixels += pixels
         lock.unlock()
@@ -140,11 +143,17 @@ final class ScrollEngine: NSObject {
         lastDrainNS = now
         trimWindow(now: now)
 
+        // Decay the pool by the continuous portion (matches the tested
+        // ScrollMath contract) and carry fractional pixels in a separate
+        // residual — subtracting only whole emitted pixels deadlocks the
+        // pool when the per-frame portion rounds to zero.
         let portion = ScrollMath.releasePortion(pending: pendingPixels, dt: dt, tau: cfg.tau)
-        let emit = Int(portion.rounded(.towardZero))
-        // Keep the sub-pixel remainder in the pool: nothing is lost.
-        pendingPixels -= Double(emit)
-        if emit == 0, abs(pendingPixels) < 0.01 { pendingPixels = 0 }
+        pendingPixels -= portion
+        emitResidual += portion
+        // Truncate mid-gesture; once the pool is empty, round to nearest so
+        // float error (0.999...) can't strand the last pixel.
+        let emit = Int(emitResidual.rounded(pendingPixels == 0 ? .toNearestOrAwayFromZero : .towardZero))
+        emitResidual -= Double(emit)
 
         var sendBegan = false
         var sendEnded = false
@@ -156,6 +165,7 @@ final class ScrollEngine: NSObject {
         { // 80ms idle
             gestureActive = false
             sendEnded = true
+            emitResidual = 0 // drop the sub-pixel tail with the gesture
         }
         lock.unlock()
 
