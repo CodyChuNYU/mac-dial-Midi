@@ -62,6 +62,9 @@ final class FrontAppTracker {
     private let lock = NSLock()
     private var front: (bundleID: String, name: String)?
 
+    /// Called on the main queue after the frontmost app changes.
+    var onChange: (() -> Void)?
+
     init() {
         update(NSWorkspace.shared.frontmostApplication)
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -70,6 +73,7 @@ final class FrontAppTracker {
         ) { [weak self] note in
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             self?.update(app)
+            self?.onChange?()
         }
     }
 
@@ -155,6 +159,7 @@ class StatusBarController {
 
     private func setMode(_ mode: Mode, for serial: String) {
         UserDefaults.standard.set(mode.rawValue, forKey: "mode.\(serial)")
+        manager.reconfigureAll() // haptic feel follows the mode
         rebuildMenu()
     }
 
@@ -205,12 +210,25 @@ class StatusBarController {
 
         manager.configureDial = { [weak self] dial in
             guard let self = self else { return }
-            // Haptics on: coarse hardware steps, each one a physical click.
-            // Haptics off: fine 360-step resolution for buttery scrolling.
-            // The scroll engine normalizes by resolution, so speed is
-            // identical either way — only the feel changes.
-            dial.wheelSensitivity = self.haptics ? self.wheelSensitivity.steps : 360
-            dial.haptics = self.haptics
+            if self.effectiveMode(for: dial) == .playback {
+                // Playback is always clicky: 36 detents/rev means one haptic
+                // tick per volume step, and one tick per song when skipping.
+                dial.wheelSensitivity = 36
+                dial.haptics = true
+            } else {
+                // Haptics on: coarse hardware steps, each one a physical click.
+                // Haptics off: fine 360-step resolution for buttery scrolling.
+                // The scroll engine normalizes by resolution, so speed is
+                // identical either way — only the feel changes.
+                dial.wheelSensitivity = self.haptics ? self.wheelSensitivity.steps : 360
+                dial.haptics = self.haptics
+            }
+        }
+
+        // Mode can flip with the frontmost app (per-app profiles), and the
+        // haptic feel follows the mode — re-apply hardware config on switch.
+        frontApp.onChange = { [weak self] in
+            self?.manager.reconfigureAll()
         }
 
         manager.onButtonStateChanged = { [weak self] dial, state in
@@ -400,6 +418,7 @@ class StatusBarController {
             appModes[bundleID] = raw
             appNames[bundleID] = name
         }
+        manager.reconfigureAll()
         rebuildMenu()
     }
 
@@ -407,6 +426,7 @@ class StatusBarController {
         guard let bundleID = sender.representedObject as? String else { return }
         appModes.removeValue(forKey: bundleID)
         appNames.removeValue(forKey: bundleID)
+        manager.reconfigureAll()
         rebuildMenu()
     }
 

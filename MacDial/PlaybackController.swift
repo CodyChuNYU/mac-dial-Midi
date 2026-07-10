@@ -116,6 +116,7 @@ class PlaybackController: Controller {
     private var lastAudibleApp: NSRunningApplication? // main queue only
 
     func onDown(dial: Dial) {
+        dial.impact() // tactile confirmation of the press
         pressStates[dial.serialNumber] = PressState()
     }
 
@@ -145,11 +146,13 @@ class PlaybackController: Controller {
 
     func onRotate(dial: Dial, rotation: Dial.Rotation, direction _: Int) {
         if var state = pressStates[dial.serialNumber] {
-            // Press-and-turn: one track skip per 1/32 revolution (11.25°).
+            // Press-and-turn: playback mode runs the dial at 36 haptic
+            // detents/rev, and one skip per detent means every physical
+            // click you feel is exactly one song.
             state.rotated = true
             let steps = state.skip.steps(ticks: rotation.ticks,
                                          ticksPerRevolution: dial.wheelSensitivity,
-                                         stepsPerRevolution: 32)
+                                         stepsPerRevolution: 36)
             pressStates[dial.serialNumber] = state
             if steps != 0 {
                 let key = steps > 0 ? NX_KEYTYPE_NEXT : NX_KEYTYPE_PREVIOUS
