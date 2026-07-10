@@ -34,6 +34,7 @@ func HIDPostAuxKey(key: Int32, modifiers: [NSEvent.ModifierFlags], _repeat: Int 
 
 class PlaybackController: Controller {
     var lastClick = Date().timeIntervalSince1970
+    private var volume = TickAccumulator()
 
     func onDown(dial _: Dial) {}
 
@@ -53,14 +54,15 @@ class PlaybackController: Controller {
         lastClick = Date().timeIntervalSince1970
     }
 
-    func onRotate(dial _: Dial, rotation: Dial.Rotation, direction _: Int) {
-        let modifiers = [NSEvent.ModifierFlags.shift, NSEvent.ModifierFlags.option]
-
-        switch rotation {
-        case let .Clockwise(count):
-            HIDPostAuxKey(key: NX_KEYTYPE_SOUND_UP, modifiers: modifiers, _repeat: count)
-        case let .CounterClockwise(count):
-            HIDPostAuxKey(key: NX_KEYTYPE_SOUND_DOWN, modifiers: modifiers, _repeat: count)
-        }
+    func onRotate(dial: Dial, rotation: Dial.Rotation, direction _: Int) {
+        // Normalize to ~36 volume steps per revolution at any hardware
+        // resolution, so smooth mode doesn't change volume 10x faster.
+        let steps = volume.steps(ticks: rotation.ticks,
+                                 ticksPerRevolution: dial.wheelSensitivity)
+        guard steps != 0 else { return }
+        let key = steps > 0 ? NX_KEYTYPE_SOUND_UP : NX_KEYTYPE_SOUND_DOWN
+        HIDPostAuxKey(key: key,
+                      modifiers: [.shift, .option], // quarter-step volume
+                      _repeat: abs(steps))
     }
 }

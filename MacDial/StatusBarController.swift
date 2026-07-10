@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ServiceManagement
 
 enum WheelSensitivity: String, CaseIterable {
     case low, medium, high, extreme
@@ -45,6 +46,47 @@ enum Mode: String, CaseIterable {
         case .midi: return "MIDI mode"
         }
     }
+
+    var shortTitle: String {
+        switch self {
+        case .scrolling: return "Scroll"
+        case .playback: return "Playback"
+        case .midi: return "MIDI"
+        }
+    }
+}
+
+/// Tracks the frontmost app (excluding ourselves) so dial events can be
+/// routed per app. Updated on the main queue, read from the HID thread.
+final class FrontAppTracker {
+    private let lock = NSLock()
+    private var front: (bundleID: String, name: String)?
+
+    init() {
+        update(NSWorkspace.shared.frontmostApplication)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            self?.update(app)
+        }
+    }
+
+    private func update(_ app: NSRunningApplication?) {
+        guard let app = app,
+              let bundleID = app.bundleIdentifier,
+              bundleID != Bundle.main.bundleIdentifier else { return }
+        lock.lock()
+        front = (bundleID, app.localizedName ?? bundleID)
+        lock.unlock()
+    }
+
+    var current: (bundleID: String, name: String)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return front
+    }
 }
 
 class StatusBarController {
@@ -52,6 +94,7 @@ class StatusBarController {
     private let menu = NSMenu()
     private let manager: DialManager
     private let scrollTestPanel = ScrollTestPanel()
+    private let frontApp = FrontAppTracker()
 
     private let controllers: [Mode: Controller] = [
         .scrolling: ScrollController(),
@@ -90,6 +133,21 @@ class StatusBarController {
         }
     }
 
+    private var launchAtLogin: Bool {
+        get { SMAppService.mainApp.status == .enabled }
+        set {
+            do {
+                if newValue {
+                    try SMAppService.mainApp.register()
+                } else {
+                    try SMAppService.mainApp.unregister()
+                }
+            } catch {
+                hidLog.error("Launch at login toggle failed: \(error)")
+            }
+        }
+    }
+
     private func mode(for dial: Dial) -> Mode {
         let raw = UserDefaults.standard.string(forKey: "mode.\(dial.serialNumber)")
         return raw.flatMap(Mode.init(rawValue:)) ?? .scrolling
@@ -100,6 +158,29 @@ class StatusBarController {
         rebuildMenu()
     }
 
+    // MARK: - Per-app profiles
+
+    private var appModes: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: "appModes") as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "appModes") }
+    }
+
+    private var appNames: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: "appNames") as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "appNames") }
+    }
+
+    /// Per-app override wins; the dial's own mode is the fallback.
+    private func effectiveMode(for dial: Dial) -> Mode {
+        if let bundleID = frontApp.current?.bundleID,
+           let raw = appModes[bundleID],
+           let mode = Mode(rawValue: raw)
+        {
+            return mode
+        }
+        return mode(for: dial)
+    }
+
     // MARK: - Init
 
     init(_ manager: DialManager) {
@@ -107,6 +188,8 @@ class StatusBarController {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.menu = menu
         menu.minimumWidth = 260
+        menu.delegate = menuDelegate
+        menuDelegate.onOpen = { [weak self] in self?.rebuildMenu() }
 
         if let button = statusItem.button {
             if let symbol = NSImage(systemSymbolName: "dial.min.fill",
@@ -132,7 +215,7 @@ class StatusBarController {
 
         manager.onButtonStateChanged = { [weak self] dial, state in
             guard let self = self else { return }
-            let controller = self.controllers[self.mode(for: dial)]
+            let controller = self.controllers[self.effectiveMode(for: dial)]
             switch state {
             case .pressed: controller?.onDown(dial: dial)
             case .released: controller?.onUp(dial: dial)
@@ -141,7 +224,7 @@ class StatusBarController {
 
         manager.onRotation = { [weak self] dial, rotation in
             guard let self = self else { return }
-            self.controllers[self.mode(for: dial)]?
+            self.controllers[self.effectiveMode(for: dial)]?
                 .onRotate(dial: dial, rotation: rotation, direction: self.scrollDirection.sign)
         }
 
@@ -151,6 +234,10 @@ class StatusBarController {
 
         rebuildMenu()
     }
+
+    /// Rebuilds just before the menu opens so the per-app section reflects
+    /// the app that was frontmost at click time.
+    private let menuDelegate = MenuOpenDelegate()
 
     // MARK: - Menu
 
@@ -188,6 +275,9 @@ class StatusBarController {
         }
 
         menu.addItem(.separator())
+        addAppProfilesMenu()
+
+        menu.addItem(.separator())
 
         let sensitivity = NSMenuItem(title: "Click Density (Haptics)", action: nil, keyEquivalent: "")
         sensitivity.submenu = NSMenu()
@@ -216,6 +306,11 @@ class StatusBarController {
         hapticsItem.state = haptics ? .on : .off
         menu.addItem(hapticsItem)
 
+        let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        login.target = self
+        login.state = launchAtLogin ? .on : .off
+        menu.addItem(login)
+
         menu.addItem(.separator())
 
         let test = NSMenuItem(title: "Scroll Test…", action: #selector(openScrollTest(_:)), keyEquivalent: "")
@@ -229,6 +324,63 @@ class StatusBarController {
         menu.addItem(quit)
     }
 
+    private func addAppProfilesMenu() {
+        let profiles = NSMenuItem(title: "App Profiles", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+
+        if let front = frontApp.current {
+            let header = NSMenuItem(title: "For \(front.name):", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            submenu.addItem(header)
+
+            let currentOverride = appModes[front.bundleID].flatMap(Mode.init(rawValue:))
+            let defaultItem = NSMenuItem(title: "Default (per-dial mode)",
+                                         action: #selector(setAppOverride(_:)), keyEquivalent: "")
+            defaultItem.target = self
+            defaultItem.state = currentOverride == nil ? .on : .off
+            defaultItem.representedObject = [front.bundleID, front.name, ""]
+            defaultItem.indentationLevel = 1
+            submenu.addItem(defaultItem)
+
+            for mode in Mode.allCases {
+                let item = NSMenuItem(title: mode.shortTitle,
+                                      action: #selector(setAppOverride(_:)), keyEquivalent: "")
+                item.target = self
+                item.state = currentOverride == mode ? .on : .off
+                item.representedObject = [front.bundleID, front.name, mode.rawValue]
+                item.indentationLevel = 1
+                submenu.addItem(item)
+            }
+        }
+
+        let overrides = appModes
+        if !overrides.isEmpty {
+            submenu.addItem(.separator())
+            let header = NSMenuItem(title: "Active overrides (click to remove):", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            submenu.addItem(header)
+            for (bundleID, raw) in overrides.sorted(by: { $0.key < $1.key }) {
+                let name = appNames[bundleID] ?? bundleID
+                let modeTitle = Mode(rawValue: raw)?.shortTitle ?? raw
+                let item = NSMenuItem(title: "\(name) — \(modeTitle)",
+                                      action: #selector(removeAppOverride(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = bundleID
+                item.indentationLevel = 1
+                submenu.addItem(item)
+            }
+        }
+
+        if submenu.items.isEmpty {
+            let empty = NSMenuItem(title: "No app in front", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            submenu.addItem(empty)
+        }
+
+        profiles.submenu = submenu
+        menu.addItem(profiles)
+    }
+
     // MARK: - Actions
 
     @objc private func selectMode(_ sender: NSMenuItem) {
@@ -236,6 +388,26 @@ class StatusBarController {
               pair.count == 2,
               let mode = Mode(rawValue: pair[1]) else { return }
         setMode(mode, for: pair[0])
+    }
+
+    @objc private func setAppOverride(_ sender: NSMenuItem) {
+        guard let triple = sender.representedObject as? [String], triple.count == 3 else { return }
+        let (bundleID, name, raw) = (triple[0], triple[1], triple[2])
+        if raw.isEmpty {
+            appModes.removeValue(forKey: bundleID)
+            appNames.removeValue(forKey: bundleID)
+        } else {
+            appModes[bundleID] = raw
+            appNames[bundleID] = name
+        }
+        rebuildMenu()
+    }
+
+    @objc private func removeAppOverride(_ sender: NSMenuItem) {
+        guard let bundleID = sender.representedObject as? String else { return }
+        appModes.removeValue(forKey: bundleID)
+        appNames.removeValue(forKey: bundleID)
+        rebuildMenu()
     }
 
     @objc private func selectSensitivity(_ sender: NSMenuItem) {
@@ -257,11 +429,25 @@ class StatusBarController {
         rebuildMenu()
     }
 
+    @objc private func toggleLaunchAtLogin(_: NSMenuItem) {
+        launchAtLogin.toggle()
+        rebuildMenu()
+    }
+
     @objc private func openScrollTest(_: NSMenuItem) {
         scrollTestPanel.show()
     }
 
     @objc private func quitApp(_: NSMenuItem) {
         NSApplication.shared.terminate(self)
+    }
+}
+
+/// Small delegate that lets the controller refresh the menu right as it opens.
+final class MenuOpenDelegate: NSObject, NSMenuDelegate {
+    var onOpen: (() -> Void)?
+
+    func menuNeedsUpdate(_: NSMenu) {
+        onOpen?()
     }
 }

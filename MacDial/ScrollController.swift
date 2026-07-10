@@ -1,32 +1,58 @@
 import AppKit
 import Foundation
 
+/// Scroll mode. Rotation scrolls through the ScrollEngine; press-and-turn
+/// adjusts volume instead; a press with no rotation clicks on release.
 class ScrollController: Controller {
-    private enum MouseButton {
-        case down
-        case up
+    private struct PressState {
+        var pressed = false
+        var rotated = false
+        var volume = TickAccumulator()
     }
 
-    private func sendMouse(button: MouseButton) {
+    private var pressStates: [String: PressState] = [:]
+
+    private func click() {
         let mousePos = NSEvent.mouseLocation
         let screenHeight = NSScreen.main?.frame.height ?? 0
         let translatedMousePos = NSPoint(x: mousePos.x, y: screenHeight - mousePos.y)
-        let event = CGEvent(mouseEventSource: nil,
-                            mouseType: button == .down ? .leftMouseDown : .leftMouseUp,
-                            mouseCursorPosition: translatedMousePos,
-                            mouseButton: .left)
-        event?.post(tap: .cghidEventTap)
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+            let event = CGEvent(mouseEventSource: nil,
+                                mouseType: type,
+                                mouseCursorPosition: translatedMousePos,
+                                mouseButton: .left)
+            event?.post(tap: .cghidEventTap)
+        }
     }
 
-    func onDown(dial _: Dial) {
-        sendMouse(button: .down)
+    func onDown(dial: Dial) {
+        pressStates[dial.serialNumber] = PressState(pressed: true)
     }
 
-    func onUp(dial _: Dial) {
-        sendMouse(button: .up)
+    func onUp(dial: Dial) {
+        let state = pressStates.removeValue(forKey: dial.serialNumber)
+        // Click on release, but only if the press wasn't a press-and-turn.
+        if state?.rotated != true {
+            click()
+        }
     }
 
     func onRotate(dial: Dial, rotation: Dial.Rotation, direction: Int) {
+        if var state = pressStates[dial.serialNumber], state.pressed {
+            // Press-and-turn: volume, normalized to ~36 steps per revolution.
+            state.rotated = true
+            let steps = state.volume.steps(ticks: rotation.ticks,
+                                           ticksPerRevolution: dial.wheelSensitivity)
+            pressStates[dial.serialNumber] = state
+            if steps != 0 {
+                let key = steps > 0 ? NX_KEYTYPE_SOUND_UP : NX_KEYTYPE_SOUND_DOWN
+                HIDPostAuxKey(key: key,
+                              modifiers: [.shift, .option], // quarter-step volume
+                              _repeat: abs(steps))
+            }
+            return
+        }
+
         ScrollEngine.shared.ingest(ticks: rotation.ticks * direction,
                                    ticksPerRevolution: dial.wheelSensitivity)
     }
