@@ -9,7 +9,7 @@ macOS support for the Microsoft Surface Dial — including more than one at a ti
 * **App-switcher knob** — in scroll mode, press to summon the ⌘Tab switcher, turn to dial through apps (one haptic click per app), release to switch. A quick press toggles to the previous app.
 * **Playback remote** — instant play/pause, hold to peek the menu bar Now Playing panel, hold-and-turn to skip tracks (one haptic click per song), rotate for velocity-accelerated volume.
 * **Haptics = feel switch** — haptics on gives real detent clicks (choose the density in the menu); haptics off is a fine 360-step free spin. Scroll speed is identical either way. Gestures that step through items (songs, apps) always click while held, regardless of the toggle.
-* **MIDI mode** — each dial appears as its own virtual CoreMIDI source. Rotation sends a relative CC (two's complement, CC 16+n), press sends note 60+n. Slots are stable per dial across reconnects.
+* **MIDI mode** — each dial appears as its own virtual CoreMIDI source, with a separately mappable lane per gesture: rotation = relative CC 16+n (two's complement), press = note 60+n, hold = note 72+n, hold+turn = relative CC 32+n. Slots are stable per dial across reconnects.
 * **Per-app profiles** — override the mode per frontmost app (e.g. scroll everywhere, MIDI when your DAW is in front).
 * **Scroll Test window** — live velocity/jitter measurement plus sliders to tune the acceleration curve while you turn the dial.
 * **Launch at Login** toggle in the menu.
@@ -20,7 +20,7 @@ macOS support for the Microsoft Surface Dial — including more than one at a ti
 |------|------|-------|------|-------------|
 | Scroll | Accelerated scrolling | App switcher (quick press = previous app) | App switcher stays up | Dial through apps, release to switch |
 | Playback | Volume (accelerated) | Play / pause (instant) | Peek Now Playing (closes on release) | Skip tracks, one click per song |
-| MIDI | Relative CC 16+n | Note 60+n | — | — |
+| MIDI | Relative CC 16+n | Note 60+n | Note 72+n | Relative CC 32+n |
 
 ## Building
 
