@@ -117,10 +117,17 @@ class PlaybackController: Controller {
 
     func onDown(dial: Dial) {
         dial.impact() // tactile confirmation of the press
+        // While held, force clicky detents so each song skip is a felt tick —
+        // regardless of the global haptics setting.
+        dial.wheelSensitivity = 36
+        dial.haptics = true
         pressStates[dial.serialNumber] = PressState()
     }
 
     func onUp(dial: Dial) {
+        // Restore the user's configured feel (global haptics setting).
+        DialManager.shared.configureDial?(dial)
+
         let state = pressStates.removeValue(forKey: dial.serialNumber)
         // Press-and-turn already skipped tracks; don't also play/pause.
         guard state?.rotated != true else { return }
