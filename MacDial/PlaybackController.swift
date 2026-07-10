@@ -183,9 +183,9 @@ class PlaybackController: Controller {
 
     func onDown(dial: Dial) {
         // While held, force coarse clicky detents so each song skip is a felt
-        // tick — regardless of the global haptics setting. 18 is the hardware
-        // minimum (20° per click, closest to the 1/16 turn we want).
-        dial.wheelSensitivity = 18
+        // tick — regardless of the global haptics setting. 20 detents/rev
+        // (18° per click) — one felt click is exactly one song.
+        dial.wheelSensitivity = 20
         dial.haptics = true
         // Long press (no rotation): expand the menu bar Now Playing panel,
         // as soon as the threshold passes — no release needed.
@@ -240,14 +240,14 @@ class PlaybackController: Controller {
 
     func onRotate(dial: Dial, rotation: Dial.Rotation, direction _: Int) {
         if var state = pressStates[dial.serialNumber] {
-            // Press-and-turn: the hold runs the dial at 18 haptic detents/rev
+            // Press-and-turn: the hold runs the dial at 20 haptic detents/rev
             // and one skip per detent, so every physical click you feel is
             // exactly one song.
             state.rotated = true
             state.longPress.item.cancel() // turning means skip, not Now Playing
             let steps = state.skip.steps(ticks: rotation.ticks,
                                          ticksPerRevolution: dial.wheelSensitivity,
-                                         stepsPerRevolution: 18)
+                                         stepsPerRevolution: 20)
             pressStates[dial.serialNumber] = state
             if steps != 0 {
                 let key = steps > 0 ? NX_KEYTYPE_NEXT : NX_KEYTYPE_PREVIOUS
