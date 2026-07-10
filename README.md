@@ -1,27 +1,32 @@
 # Mac Dial
 
-macOS support for the Surface Dial. The surface dial can be paired with macOS but any input results in invalid mouse inputs on macOS. This app reads the raw data from the dial and translates them to correct mouse and media inputs for macOS.
+macOS support for the Microsoft Surface Dial — including more than one at a time. Paired dials produce invalid mouse input on macOS; this app seizes the HID device and translates rotation and presses into smooth scrolling, media controls, or MIDI.
+
+## Features
+
+* **Multiple dials** — every connected Surface Dial is handled independently, each with its own mode.
+* **Premium scrolling** — velocity-based acceleration with sub-pixel smoothing, delivered as a trackpad-style gesture stream (continuous pixel events with scroll phases). Slow turns are 1:1 precise; fast spins accelerate along a tunable curve.
+* **Haptics = feel switch** — haptics on gives real detent clicks (choose the density in the menu); haptics off is a fine 360-step free spin. Scroll speed is identical either way.
+* **MIDI mode** — each dial appears as its own virtual CoreMIDI source. Rotation sends a relative CC (two's complement, CC 16+n), press sends note 60+n. Slots are stable per dial across reconnects.
+* **Per-app profiles** — override the mode per frontmost app (e.g. scroll everywhere, MIDI when your DAW is in front).
+* **Press-and-turn** — in scroll mode, hold the dial down and turn to change volume; a plain press clicks at the cursor.
+* **Scroll Test window** — live velocity/jitter measurement plus sliders to tune the acceleration curve while you turn the dial.
+* **Launch at Login** toggle in the menu.
 
 ## Building
 
-Make sure to clone the hidapi submodule and build the library using the build_hidapi.sh script. Note: This app depends on a hidapi fork, check the submodule to see what changed. App should then build with XCode.
+Plain Xcode project, no dependencies — open `MacDial.xcodeproj` and build (macOS 14+). The HID layer uses IOHIDManager directly; the old hidapi submodule is gone.
 
-You can find universal builds of the app under "releases". Note that these builds can be outdated.
+Run the scroll-math self-check with:
+
+```sh
+swiftc -o /tmp/scrollmath Tests/test_scroll_math.swift MacDial/ScrollMath.swift && /tmp/scrollmath
+```
+
+## Permissions
+
+Posting scroll/click/media events requires **Accessibility** access (System Settings → Privacy & Security → Accessibility). The app prompts on first launch. Reading the dials and MIDI mode need no permissions.
 
 ## Usage
 
-The app will continously try to open any Surface Dial connected to the computer and then process input controls. You will need to pair and connect the device as any other bluetooth device.
-
-The app currently supports two modes:
-* Scroll mode: Turning the dial will result in scrolling. Pressing the dial is interpreteded as a mouse click at the current cursor position.
-* Playback mode: Turning the dial controls the system volume of your mac. Pressing the dial plays / pauses any current playback while a double click sends the "next" media action.
-
-To change mode, click the Mac Dial icon in the system menu bar.
-
-If you want to app to run at startup you will need to add it yourself to the "login items" for your user.
-
-## Improvements
-
-* More input modes
-* Change input mode using the dial itself
-* ~~Smarter device discovery (currently tries to open the dial every 50 ms)~~
+Pair the dial like any Bluetooth device. Click the Mac Dial menu bar icon to set each dial's mode (Scroll / Playback / MIDI), click density, scroll direction, per-app profiles, and to open the Scroll Test tuning window.

@@ -1,0 +1,23 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run scroll math checks
+        run: |
+          swiftc -o /tmp/scrollmath Tests/test_scroll_math.swift MacDial/ScrollMath.swift
+          /tmp/scrollmath
+
+      - name: Build
+        run: |
+          xcodebuild -project MacDial.xcodeproj -scheme MacDial \
+            -configuration Release build \
+            CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM=""
