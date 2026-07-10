@@ -140,13 +140,27 @@ struct VolumeControl {
 /// Playback mode: rotate = volume (accelerated), press = play/pause,
 /// double-press = focus the app that's playing, press-and-turn = skip tracks.
 class PlaybackController: Controller {
+    /// Fires the long-press action while the dial is still held. `fired` is
+    /// only touched on the main queue, so onUp's main-queue check is race-free.
+    private final class LongPressToken {
+        var fired = false
+        private(set) var item: DispatchWorkItem!
+
+        init(action: @escaping () -> Void) {
+            item = DispatchWorkItem { [weak self] in
+                self?.fired = true
+                action()
+            }
+        }
+    }
+
     private struct PressState {
         var rotated = false
         var skip = TickAccumulator()
-        let downTime = ProcessInfo.processInfo.systemUptime
+        let longPress: LongPressToken
     }
 
-    private static let longPressSeconds = 0.6
+    private static let longPressSeconds = 0.4
 
     private var lastClick = Date().timeIntervalSince1970
     private var pressStates: [String: PressState] = [:]
@@ -159,7 +173,11 @@ class PlaybackController: Controller {
         // minimum (20° per click, closest to the 1/16 turn we want).
         dial.wheelSensitivity = 18
         dial.haptics = true
-        pressStates[dial.serialNumber] = PressState()
+        // Long press (no rotation): expand the menu bar Now Playing panel,
+        // as soon as the threshold passes — no release needed.
+        let token = LongPressToken { openNowPlayingPanel() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.longPressSeconds, execute: token.item)
+        pressStates[dial.serialNumber] = PressState(longPress: token)
     }
 
     func onUp(dial: Dial) {
@@ -168,21 +186,22 @@ class PlaybackController: Controller {
 
         let state = pressStates.removeValue(forKey: dial.serialNumber)
         // Press-and-turn already skipped tracks; don't also play/pause.
-        guard state?.rotated != true else { return }
-
-        // Long press (no rotation): expand the menu bar Now Playing panel.
-        if let state = state,
-           ProcessInfo.processInfo.systemUptime - state.downTime >= Self.longPressSeconds
-        {
-            DispatchQueue.main.async { openNowPlayingPanel() }
+        guard state?.rotated != true else {
+            state?.longPress.item.cancel()
             return
         }
+
+        // Released before the long-press timer: cancel it. (No-op if it
+        // already fired; the main-queue block below sees `fired` and bails.)
+        state?.longPress.item.cancel()
 
         let clickDelay = Date().timeIntervalSince1970 - lastClick
         lastClick = Date().timeIntervalSince1970
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            // Long press already opened the Now Playing panel; nothing to do.
+            if state?.longPress.fired == true { return }
             if clickDelay < 0.5 { // Double click: focus the playing app
                 // Undo pause sent on first click
                 HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
@@ -203,6 +222,7 @@ class PlaybackController: Controller {
             // and one skip per detent, so every physical click you feel is
             // exactly one song.
             state.rotated = true
+            state.longPress.item.cancel() // turning means skip, not Now Playing
             let steps = state.skip.steps(ticks: rotation.ticks,
                                          ticksPerRevolution: dial.wheelSensitivity,
                                          stepsPerRevolution: 18)
