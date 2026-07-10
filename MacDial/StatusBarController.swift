@@ -64,9 +64,9 @@ class StatusBarController {
     private var wheelSensitivity: WheelSensitivity {
         get {
             let raw = UserDefaults.standard.string(forKey: "sensitivity")
-            // Extreme by default: the engine normalizes speed by resolution,
-            // so more steps only means smoother input, not faster scrolling.
-            return raw.flatMap(WheelSensitivity.init(rawValue:)) ?? .extreme
+            // Only used while haptics is on: it sets the click density.
+            // Medium = 36 real detents per revolution, like a mouse wheel.
+            return raw.flatMap(WheelSensitivity.init(rawValue:)) ?? .medium
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "sensitivity")
@@ -109,15 +109,24 @@ class StatusBarController {
         menu.minimumWidth = 260
 
         if let button = statusItem.button {
-            let icon = NSImage(named: "icon-scroll")
-            icon?.size = NSSize(width: 18, height: 18)
-            button.image = icon
-            button.imagePosition = .imageLeft
+            if let symbol = NSImage(systemSymbolName: "dial.min.fill",
+                                    accessibilityDescription: "Mac Dial")
+            {
+                symbol.isTemplate = true
+                button.image = symbol
+                button.imagePosition = .imageOnly
+            } else {
+                button.title = "◐"
+            }
         }
 
         manager.configureDial = { [weak self] dial in
             guard let self = self else { return }
-            dial.wheelSensitivity = self.wheelSensitivity.steps
+            // Haptics on: coarse hardware steps, each one a physical click.
+            // Haptics off: fine 360-step resolution for buttery scrolling.
+            // The scroll engine normalizes by resolution, so speed is
+            // identical either way — only the feel changes.
+            dial.wheelSensitivity = self.haptics ? self.wheelSensitivity.steps : 360
             dial.haptics = self.haptics
         }
 
@@ -180,7 +189,7 @@ class StatusBarController {
 
         menu.addItem(.separator())
 
-        let sensitivity = NSMenuItem(title: "Wheel Sensitivity", action: nil, keyEquivalent: "")
+        let sensitivity = NSMenuItem(title: "Click Density (Haptics)", action: nil, keyEquivalent: "")
         sensitivity.submenu = NSMenu()
         for option in WheelSensitivity.allCases {
             let item = NSMenuItem(title: option.title, action: #selector(selectSensitivity(_:)), keyEquivalent: "")
