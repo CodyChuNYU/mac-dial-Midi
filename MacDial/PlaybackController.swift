@@ -1,92 +1,5 @@
 import AppKit
-import CoreAudio
 import Foundation
-
-/// Dedicated players, preferred over e.g. a browser that also makes noise.
-private let knownPlayerBundles = ["com.apple.Music", "com.spotify.client"]
-
-/// Maps a process to the one macOS holds responsible for it — how browser
-/// helper processes (which own the audio) resolve to the browser itself.
-private let responsiblePID: (@convention(c) (pid_t) -> pid_t)? = {
-    guard let sym = dlsym(dlopen(nil, RTLD_NOW), "responsibility_get_pid_responsible_for_pid")
-    else { return nil }
-    return unsafeBitCast(sym, to: (@convention(c) (pid_t) -> pid_t).self)
-}()
-
-/// The focusable app behind an audio-producing PID. Browsers play audio in
-/// helper processes (Chrome Helper, WebKit GPU), so a non-regular process is
-/// resolved via its responsible PID, then by bundle-ID prefix as a fallback.
-private func focusableApp(forAudioPID pid: pid_t) -> NSRunningApplication? {
-    if let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular {
-        return app
-    }
-    if let responsiblePID = responsiblePID {
-        let rpid = responsiblePID(pid)
-        if rpid > 0, rpid != pid,
-           let app = NSRunningApplication(processIdentifier: rpid),
-           app.activationPolicy == .regular
-        {
-            return app
-        }
-    }
-    // Helper bundle IDs usually extend the app's (com.google.Chrome.helper).
-    if let helperID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier?.lowercased() {
-        return NSWorkspace.shared.runningApplications.first { app in
-            guard app.activationPolicy == .regular,
-                  let bundleID = app.bundleIdentifier?.lowercased() else { return false }
-            return helperID.hasPrefix(bundleID)
-        }
-    }
-    return nil
-}
-
-/// The user-facing app currently producing audio output, found via
-/// CoreAudio's process objects (public API, no permissions needed).
-/// Catches anything — Music, Spotify, YouTube in a browser.
-func audiblyPlayingApp() -> NSRunningApplication? {
-    var listAddr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
-                                              mScope: kAudioObjectPropertyScopeGlobal,
-                                              mElement: kAudioObjectPropertyElementMain)
-    var size: UInt32 = 0
-    guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject),
-                                         &listAddr, 0, nil, &size) == noErr, size > 0 else { return nil }
-    var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
-                                     &listAddr, 0, nil, &size, &objects) == noErr else { return nil }
-
-    func property(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> UInt32? {
-        var addr = AudioObjectPropertyAddress(mSelector: selector,
-                                              mScope: kAudioObjectPropertyScopeGlobal,
-                                              mElement: kAudioObjectPropertyElementMain)
-        var value: UInt32 = 0
-        var valueSize = UInt32(MemoryLayout<UInt32>.size)
-        guard AudioObjectGetPropertyData(object, &addr, 0, nil, &valueSize, &value) == noErr else { return nil }
-        return value
-    }
-
-    var audible: [NSRunningApplication] = []
-    for object in objects {
-        guard property(object, kAudioProcessPropertyIsRunningOutput) == 1,
-              let pid = property(object, kAudioProcessPropertyPID),
-              let app = focusableApp(forAudioPID: pid_t(pid)),
-              app.bundleIdentifier != Bundle.main.bundleIdentifier,
-              !audible.contains(where: { $0.processIdentifier == app.processIdentifier })
-        else { continue }
-        audible.append(app)
-    }
-    return audible.first { knownPlayerBundles.contains($0.bundleIdentifier ?? "") } ?? audible.first
-}
-
-/// Fallback when nothing is audible (e.g. already paused): a running
-/// dedicated player app.
-func runningKnownPlayer() -> NSRunningApplication? {
-    for bundle in knownPlayerBundles {
-        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first {
-            return app
-        }
-    }
-    return nil
-}
 
 /// Finds Control Center's Now Playing menu extra via the Accessibility API
 /// (covered by the permission the app already holds for posting events).
@@ -173,8 +86,8 @@ struct VolumeControl {
     }
 }
 
-/// Playback mode: rotate = volume (accelerated), press = play/pause,
-/// double-press = focus the app that's playing, press-and-turn = skip tracks.
+/// Playback mode: rotate = volume (accelerated), press = play/pause (instant),
+/// hold = peek Now Playing while held, press-and-turn = skip tracks.
 class PlaybackController: Controller {
     /// Fires the peek while the dial is still held, caching the menu extra so
     /// the close on release is a single AXPress with no tree walk. `fired`
@@ -185,11 +98,10 @@ class PlaybackController: Controller {
         var panelItem: AXUIElement?
         private(set) var item: DispatchWorkItem!
 
-        init(onFire: @escaping () -> Void) {
+        init() {
             item = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
                 self.fired = true
-                onFire()
                 let t0 = ProcessInfo.processInfo.systemUptime
                 self.panelItem = nowPlayingMenuExtra()
                 let t1 = ProcessInfo.processInfo.systemUptime
@@ -213,22 +125,8 @@ class PlaybackController: Controller {
     /// eating play/pause presses.
     private static let longPressSeconds = 0.25
 
-    /// Window in which a second press counts as a double click.
-    private static let doubleClickSeconds = 0.35
-
     private var pressStates: [String: PressState] = [:]
     private var volume = VolumeControl()
-    private var lastAudibleApp: NSRunningApplication? // main queue only
-    private var lastClickAt: TimeInterval = 0 // main queue only
-
-    /// Play/pause fires instantly on click; if the *next* press turns out to
-    /// be something else (peek, skip-turn), this undoes that toggle so a
-    /// double-gesture never leaves the song paused. Main queue only.
-    private func undoRecentPlayPause() {
-        guard ProcessInfo.processInfo.systemUptime - lastClickAt < Self.doubleClickSeconds else { return }
-        lastClickAt = 0
-        HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
-    }
 
     func onDown(dial: Dial) {
         // While held, force coarse clicky detents so each song skip is a felt
@@ -236,9 +134,8 @@ class PlaybackController: Controller {
         // (12° per click) — one felt click is exactly one song.
         dial.configure(sensitivity: 30, haptics: true)
         // Long press (no rotation): expand the menu bar Now Playing panel,
-        // as soon as the threshold passes — no release needed. If this press
-        // came right after a click, undo that click's play/pause first.
-        let token = LongPressToken { [weak self] in self?.undoRecentPlayPause() }
+        // as soon as the threshold passes — no release needed.
+        let token = LongPressToken()
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.longPressSeconds, execute: token.item)
         pressStates[dial.serialNumber] = PressState(longPress: token)
     }
@@ -255,7 +152,7 @@ class PlaybackController: Controller {
         let rotated = state.rotated
 
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+            guard self != nil else { return }
             // Long press opened the Now Playing panel: releasing ALWAYS
             // closes it — even if the dial was turned during the peek (a
             // detent jiggle on release must not strand the panel open).
@@ -272,21 +169,8 @@ class PlaybackController: Controller {
             // Press-and-turn already skipped tracks; don't also play/pause.
             if rotated { return }
 
-            let now = ProcessInfo.processInfo.systemUptime
-            if now - self.lastClickAt < Self.doubleClickSeconds {
-                // Double click: this toggle undoes the first click's pause,
-                // then the playing app comes to front.
-                self.lastClickAt = 0
-                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
-                let app = self.lastAudibleApp ?? audiblyPlayingApp() ?? runningKnownPlayer()
-                app?.activate()
-            } else {
-                // Single click: instant play/pause. Snapshot who's audible
-                // first, while the sound is still on.
-                self.lastClickAt = now
-                self.lastAudibleApp = audiblyPlayingApp()
-                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
-            }
+            // Instant play/pause.
+            HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
         }
     }
 
@@ -295,10 +179,6 @@ class PlaybackController: Controller {
             // Press-and-turn: the hold runs the dial at 30 haptic detents/rev
             // and one skip per detent, so every physical click you feel is
             // exactly one song.
-            if !state.rotated {
-                // Click-then-skip: undo the click's play/pause toggle.
-                DispatchQueue.main.async { [weak self] in self?.undoRecentPlayPause() }
-            }
             state.rotated = true
             state.longPress.item.cancel() // turning means skip, not Now Playing
             let steps = state.skip.steps(ticks: rotation.ticks,
