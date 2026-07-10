@@ -176,10 +176,15 @@ class PlaybackController: Controller {
     /// eating play/pause presses.
     private static let longPressSeconds = 0.25
 
-    private var lastClick = Date().timeIntervalSince1970
+    /// How long a single click waits for a possible second click. Play/pause
+    /// fires only after this window, so a double click never pauses playback.
+    private static let doubleClickSeconds = 0.35
+
     private var pressStates: [String: PressState] = [:]
     private var volume = VolumeControl()
     private var lastAudibleApp: NSRunningApplication? // main queue only
+    private var pendingSingleClick: DispatchWorkItem? // main queue only
+    private var isSecondClick = false // main queue only
 
     func onDown(dial: Dial) {
         // While held, force coarse clicky detents so each song skip is a felt
@@ -191,6 +196,20 @@ class PlaybackController: Controller {
         let token = LongPressToken()
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.longPressSeconds, execute: token.item)
         pressStates[dial.serialNumber] = PressState(longPress: token)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // A press landing inside the single-click window makes this a
+            // double click: cancel the pending play/pause so playback is
+            // never touched.
+            if let pending = self.pendingSingleClick {
+                pending.cancel()
+                self.pendingSingleClick = nil
+                self.isSecondClick = true
+            } else {
+                self.isSecondClick = false
+            }
+        }
     }
 
     func onUp(dial: Dial) {
@@ -203,8 +222,6 @@ class PlaybackController: Controller {
         state.longPress.item.cancel()
 
         let rotated = state.rotated
-        let clickDelay = Date().timeIntervalSince1970 - lastClick
-        if !rotated { lastClick = Date().timeIntervalSince1970 }
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -213,6 +230,7 @@ class PlaybackController: Controller {
             // detent jiggle on release must not strand the panel open).
             let token = state.longPress
             if token.fired {
+                self.isSecondClick = false
                 if let panelItem = token.panelItem {
                     let t0 = ProcessInfo.processInfo.systemUptime
                     let err = AXUIElementPerformAction(panelItem, "AXPress" as CFString)
@@ -222,17 +240,25 @@ class PlaybackController: Controller {
                 return
             }
             // Press-and-turn already skipped tracks; don't also play/pause.
-            if rotated { return }
-            if clickDelay < 0.5 { // Double click: focus the playing app
-                // Undo pause sent on first click
-                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+            if rotated {
+                self.isSecondClick = false
+                return
+            }
+
+            if self.isSecondClick { // Double click: focus the playing app
+                self.isSecondClick = false
                 let app = self.lastAudibleApp ?? audiblyPlayingApp() ?? runningKnownPlayer()
                 app?.activate()
-            } else { // Play / Pause on single click
-                // Snapshot who's audible before the pause silences them, so a
-                // second click knows where to go.
+            } else {
+                // Snapshot who's audible while sound is still playing, then
+                // play/pause once the double-click window passes.
                 self.lastAudibleApp = audiblyPlayingApp()
-                HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+                let work = DispatchWorkItem { [weak self] in
+                    self?.pendingSingleClick = nil
+                    HIDPostAuxKey(key: NX_KEYTYPE_PLAY, modifiers: [], _repeat: 1)
+                }
+                self.pendingSingleClick = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.doubleClickSeconds, execute: work)
             }
         }
     }
